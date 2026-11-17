@@ -1,164 +1,98 @@
-// NEON TIDE — configuration and data tables for Port Solano.
-// All names, places, vehicles and story beats are original fiction.
-export const WORLD = { w: 2400, h: 1600 };
+// NEON TIDE — config.js
+// Every tuning constant for the open world of Port Solano lives here so the
+// rest of the game reads numbers from one place instead of hard-coding them.
 
-// Road centrelines. Vertical roads run the full height, horizontal the full width.
-export const V_ROADS = [240, 640, 1040, 1440, 1840, 2160];
-export const H_ROADS = [220, 520, 820, 1120, 1420];
-export const ROAD_W = 72;
-export const LANE = 18; // lane offset from a road centreline
+// World size in pixels. The city is a road grid with five districts.
+export const WORLD_W = 2400;
+export const WORLD_H = 1600;
 
+// Roads: vertical and horizontal centre lines, each road 96 px wide.
+export const ROAD_W = 96;
+export const ROADS_V = [200, 600, 1000, 1400, 1800, 2200];
+export const ROADS_H = [200, 600, 1000, 1400];
+
+// Districts, used for naming, building style and the minimap legend.
 export const DISTRICTS = [
-  { name: 'Downtown', x0: 0, y0: 0, x1: 1200, y1: 700, ground: '#3d4a3a' },
-  { name: 'Old Town', x0: 0, y0: 700, x1: 1200, y1: 1600, ground: '#4a4238' },
-  { name: 'Harbor', x0: 1700, y0: 0, x1: 2400, y1: 700, ground: '#3a4148' },
-  { name: 'Beachfront', x0: 0, y0: 1420, x1: 2400, y1: 1600, ground: '#c2a878' },
-  { name: 'Suburbs', x0: 1200, y0: 700, x1: 2400, y1: 1600, ground: '#44503c' },
+  { name: 'Old Town', x: 0, y: 0, w: 800, h: 700, style: 'old' },
+  { name: 'Downtown', x: 800, y: 300, w: 800, h: 700, style: 'downtown' },
+  { name: 'Beachfront', x: 2000, y: 0, w: 400, h: 1600, style: 'beach' },
+  { name: 'Harbor', x: 0, y: 1100, w: 1000, h: 500, style: 'harbor' },
+  { name: 'Suburbs', x: 1000, y: 1100, w: 1000, h: 500, style: 'suburb' },
 ];
 
-// Beach strip along the south edge; the sea itself is the bottom band.
-export const BEACH = { y0: 1470, waterY: 1560 };
-
-// Five drivable vehicle types. Numbers are tuned per type so each feels different.
-export const VEHICLES = {
-  sedan:   { label: 'Solano Sedan',  color: '#5b7fa6', accel: 340, top: 330, grip: 2.6, hp: 100, seats: 4 },
-  taxi:    { label: 'Harbor Taxi',   color: '#e8b93a', accel: 320, top: 310, grip: 2.6, hp: 90,  seats: 4 },
-  sport:   { label: 'Vortex GT',     color: '#c23b4e', accel: 520, top: 470, grip: 3.4, hp: 80,  seats: 2 },
-  truck:   { label: 'Dock Hauler',   color: '#7a6a4f', accel: 220, top: 240, grip: 2.0, hp: 180, seats: 2 },
-  cruiser: { label: 'PSPD Cruiser',  color: '#2e4a7a', accel: 460, top: 420, grip: 3.1, hp: 140, seats: 4 },
+// Vehicle types. speed is top speed px/s, accel px/s^2, grip steers the car.
+export const CAR_TYPES = {
+  sedan:   { name: 'Meridian Sedan', top: 330, accel: 260, brake: 420, grip: 2.6, hp: 100, len: 46, wid: 22, color: '#4a7fb5' },
+  taxi:    { name: 'Solano Cab',    top: 320, accel: 250, brake: 420, grip: 2.6, hp: 100, len: 46, wid: 22, color: '#e8b73a' },
+  sport:   { name: 'Vortex GT',     top: 480, accel: 420, brake: 560, grip: 3.4, hp: 80,  len: 48, wid: 22, color: '#c62f4e' },
+  truck:   { name: 'Hauler Truck',  top: 250, accel: 170, brake: 320, grip: 2.0, hp: 160, len: 62, wid: 26, color: '#7a6a55' },
+  cruiser: { name: 'PSPD Cruiser',  top: 400, accel: 340, brake: 520, grip: 3.0, hp: 130, len: 48, wid: 23, color: '#2b3a55' },
 };
 
-export const PLAYER = {
-  walkSpeed: 165, runSpeed: 265, radius: 13,
-  maxHealth: 100, maxArmor: 100,
-};
+export const CAR_TYPE_KEYS = ['sedan', 'taxi', 'sport', 'truck', 'cruiser'];
 
-export const WEAPONS = {
-  fists:  { label: 'Fists',  range: 46,  damage: 14, rate: 0.38, ammo: Infinity },
-  pistol: { label: 'K-9 Pistol', range: 420, damage: 34, rate: 0.30, ammo: 120 },
-};
+// On-foot movement.
+export const WALK_SPEED = 210;
+export const RUN_SPEED = 330;
 
-// Wanted heat thresholds per star. Heat decays when no police can see the player;
-// at 0 the player is clean, at 300 the whole PSPD is on them.
-export const WANTED_HEAT = [0, 25, 60, 120, 200, 300];
-export const CRIME_HEAT = { steal: 30, punch: 12, kill: 45, shoot: 20, hitPed: 18, hitCop: 60 };
-export const BUST_FINE = 500;
+// Wanted level: stars 0..5. heat is the raw score behind the stars.
+export const WANTED_MAX = 5;
+export const HEAT_PER_STAR = 100;
+
+// Economy.
+export const START_MONEY = 250;
 export const DEBT_TOTAL = 50000;
 
-// Key places on the map (all original locations in Port Solano).
+// Day cycle: one full day lasts DAY_LENGTH seconds of real time.
+export const DAY_LENGTH = 360;
+
+// The clock at the start of a new game: a bright morning in Port Solano.
+export const START_TIME = 9.0;
+
+// Player combat numbers.
+export const PUNCH_DAMAGE = 25;
+export const PUNCH_RANGE = 34;
+export const PUNCH_RATE = 0.38;
+export const PISTOL_DAMAGE = 34;
+export const PISTOL_AMMO_START = 24;
+export const PISTOL_MAX_AMMO = 120;
+export const BULLET_SPEED = 900;
+
+// Colours for the day/night lighting tints.
+export const SKY_TINTS = [
+  { h: 0,  tint: [8, 12, 34, 0.55] },   // deep night
+  { h: 5,  tint: [10, 14, 40, 0.45] },  // pre-dawn
+  { h: 6,  tint: [70, 60, 90, 0.25] },  // dawn
+  { h: 8,  tint: [255, 220, 160, 0.05] }, // morning
+  { h: 12, tint: [255, 255, 255, 0] },  // noon
+  { h: 17, tint: [255, 180, 110, 0.12] }, // golden hour
+  { h: 18.5, tint: [220, 110, 70, 0.30] }, // sunset
+  { h: 20, tint: [40, 30, 80, 0.40] },  // dusk
+  { h: 22, tint: [8, 12, 34, 0.55] },   // night
+  { h: 24, tint: [8, 12, 34, 0.55] },
+];
+
+// Radio stations: procedural chiptune, three moods.
+export const RADIO_STATIONS = [
+  { name: 'SOL 98.7 — Neon Drive', bpm: 112, root: 57, scale: [0, 3, 5, 7, 10], wave: 'sawtooth' },
+  { name: 'TIDE FM — Harbor Blues', bpm: 76, root: 45, scale: [0, 3, 5, 6, 10], wave: 'triangle' },
+  { name: 'KESTREL — Night Static', bpm: 140, root: 50, scale: [0, 2, 3, 7, 8], wave: 'square' },
+];
+
+// Pedestrian palette and gang colours.
+export const PED_SHIRTS = ['#d97b4f', '#5f8f5a', '#7a6fb0', '#b0567a', '#4f9d9d', '#c9a227', '#8a8f96'];
+export const GANG_COLOR = '#3f7d3a';
+export const COP_COLOR = '#24344d';
+
+// Mission reward table is in missions.js; these are the shared places.
 export const PLACES = {
-  club:      { x: 1040, y: 300, label: "Kestrel's Club" },
-  garage:    { x: 640, y: 900, label: 'Marlowe Garage' },
-  sportCar:  { x: 1440, y: 1420, label: 'Boardwalk' },
-  harbor:    { x: 2160, y: 300, label: 'Harbor Docks' },
-  rivalCorner:{ x: 240, y: 1120, label: 'Rival Corner' },
-  stashHouse:{ x: 1840, y: 1120, label: 'Stash House' },
-  hospital:  { x: 640, y: 220, label: 'Solano General' },
-  precinct:  { x: 1440, y: 520, label: 'PSPD Precinct' },
-  followStart:{ x: 1040, y: 820, label: 'Tail Start' },
+  kestrelClub: { x: 1200, y: 600, label: 'Kestrel Club' },
+  garage: { x: 1440, y: 1150, label: "Deke's Garage" },
+  harborDock: { x: 320, y: 1420, label: 'Harbor Dock 7' },
+  stashHouse: { x: 600, y: 420, label: 'Stash House' },
+  gangCorner: { x: 1600, y: 1000, label: 'Rival Corner' },
+  safehouse: { x: 1800, y: 1300, label: 'Safehouse' },
+  hospital: { x: 1000, y: 1180, label: 'St. Marina Hospital' },
+  policeStation: { x: 600, y: 820, label: 'PSPD Central' },
+  sportSpawn: { x: 1080, y: 560, label: 'Vortex GT' },
 };
-
-// Mission list: 8 sequential story missions. Stages are interpreted by missions.js.
-export const MISSIONS = [
-  {
-    id: 1, title: 'Welcome Back', reward: 200,
-    brief: 'Deke is back in Port Solano. Walk to Madame Kestrel\'s club and hear what she wants.',
-    dialog: [
-      ['KESTREL', 'Deke Marlowe. Five years gone, and you walk back into my city like the tide.'],
-      ['DEKE', 'I came to settle up. Fifty thousand, right?'],
-      ['KESTREL', 'Fifty thousand. Work for me, and the debt shrinks. Refuse, and the harbor eats you.'],
-    ],
-    stages: [{ type: 'goto', at: 'club', radius: 70, text: 'Walk to Kestrel\'s Club' }],
-  },
-  {
-    id: 2, title: 'Hot Wheels', reward: 500,
-    brief: 'Kestrel wants a Vortex GT from the boardwalk. Take it — quietly if you can — and bring it to the garage.',
-    dialog: [
-      ['KESTREL', 'A red Vortex GT parks by the boardwalk every dusk. Bring it to your garage.'],
-      ['DEKE', 'Borrowed, not stolen. Mostly.'],
-    ],
-    stages: [
-      { type: 'goto', at: 'sportCar', radius: 90, text: 'Find the Vortex GT at the Boardwalk' },
-      { type: 'steal', text: 'Take the Vortex GT (press E near it)' },
-      { type: 'driveTo', at: 'garage', radius: 80, text: 'Deliver the car to Marlowe Garage' },
-    ],
-  },
-  {
-    id: 3, title: 'Harbor Run', reward: 800,
-    brief: 'A package for the docks. The harbor crew waits — don\'t keep them waiting.',
-    dialog: [
-      ['KESTREL', 'Package in the trunk. Harbor docks, ninety seconds. The tide waits for no one.'],
-    ],
-    stages: [
-      { type: 'goto', at: 'club', radius: 70, text: 'Pick up the package at the club' },
-      { type: 'deliver', at: 'harbor', radius: 90, timer: 90, text: 'Deliver to the Harbor Docks before time runs out' },
-    ],
-  },
-  {
-    id: 4, title: 'Lose the Heat', reward: 1000,
-    brief: 'The PSPD is all over you. Break line of sight and stay hidden until the heat dies down.',
-    dialog: [
-      ['DEKE', 'Three stars. Every cruiser in Solano is looking for me.'],
-      ['KESTREL', 'Then stop being found. Lose them.'],
-    ],
-    stages: [
-      { type: 'heat', stars: 3, text: 'Lose the police — get your wanted level back to zero' },
-    ],
-  },
-  {
-    id: 5, title: 'Street Fight', reward: 1200,
-    brief: 'The Tidebreakers are muscling in on Old Town. Clear their corner — fists or pistol, your call.',
-    dialog: [
-      ['KESTREL', 'Four Tidebreakers hold the corner on Mercer Street. Take it back.'],
-      ['DEKE', 'Consider it taken.'],
-    ],
-    stages: [
-      { type: 'goto', at: 'rivalCorner', radius: 120, text: 'Reach the Rival Corner' },
-      { type: 'kill', count: 4, area: 'rivalCorner', radius: 260, text: 'Clear out the Tidebreakers (0/4)' },
-    ],
-  },
-  {
-    id: 6, title: 'Payback', reward: 2000,
-    brief: 'The rival stash house in the suburbs holds Kestrel\'s money. Grab the cash and get out in a car.',
-    dialog: [
-      ['KESTREL', 'My money sits in a stash house off Coral Avenue. Bring it home.'],
-    ],
-    stages: [
-      { type: 'goto', at: 'stashHouse', radius: 90, text: 'Reach the Stash House' },
-      { type: 'hold', at: 'stashHouse', radius: 70, hold: 3, text: 'Grab the cash (stay in the marker)' },
-      { type: 'driveTo', at: 'garage', radius: 80, text: 'Escape to Marlowe Garage in a car' },
-    ],
-  },
-  {
-    id: 7, title: 'The Setup', reward: 2500,
-    brief: 'Tail the Tidebreaker courier through downtown. Stay close enough to follow, far enough not to be seen.',
-    dialog: [
-      ['KESTREL', 'A courier drives the downtown loop tonight. Follow him. Do not let him see you.'],
-    ],
-    stages: [
-      { type: 'goto', at: 'followStart', radius: 100, text: 'Get to the tail start on Mercer Street' },
-      { type: 'follow', duration: 45, text: 'Tail the courier — keep your distance' },
-    ],
-  },
-  {
-    id: 8, title: 'The Big One', reward: 5000,
-    brief: 'The harbor heist. Take the docks, grab the crates, and outrun the whole PSPD.',
-    dialog: [
-      ['KESTREL', 'Tonight we take the harbor back. Guards, crates, and a fast car out.'],
-      ['DEKE', 'Fifty thousand. Tonight, the debt dies.'],
-    ],
-    stages: [
-      { type: 'goto', at: 'harbor', radius: 120, text: 'Reach the Harbor Docks' },
-      { type: 'kill', count: 6, area: 'harbor', radius: 300, text: 'Take out the harbor guards (0/6)' },
-      { type: 'hold', at: 'harbor', radius: 80, hold: 4, text: 'Load the crates (stay in the marker)' },
-      { type: 'driveTo', at: 'club', radius: 90, text: 'Escape to Kestrel\'s Club' },
-    ],
-  },
-];
-
-// Radio stations: original procedural tunes, no licensed music.
-export const RADIO = [
-  { name: 'TIDE FM', style: 'chill', bpm: 92 },
-  { name: 'SOLANO ROCK', style: 'drive', bpm: 132 },
-  { name: 'HARBOUR JAZZ', style: 'swing', bpm: 108 },
-];

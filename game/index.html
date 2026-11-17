@@ -1,20 +1,41 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="NEON TIDE — an original open-world crime game in Port Solano: steal cars, outrun the PSPD, run eight story missions and pay off a $50,000 debt.">
-<title>NEON TIDE — an open-world crime story in Port Solano</title>
+<meta name="description" content="NEON TIDE — a top-down 2D open-world crime game in Port Solano. Steal cars, dodge the PSPD, run 8 story missions and pay off a $50,000 debt.">
+<title>NEON TIDE — Open-World Crime in Port Solano</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0a0c14;
+    height: 100%;
+    overflow: hidden;
+    font-family: system-ui, sans-serif;
+  }
+  #wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: radial-gradient(ellipse at center, #141a2e 0%, #0a0c14 70%);
+  }
+  canvas {
+    width: min(1280px, 100vw);
+    height: min(720px, 100vh);
+    background: #000;
+    box-shadow: 0 0 60px rgba(255, 46, 99, 0.25), 0 0 120px rgba(8, 217, 214, 0.12);
+    image-rendering: auto;
+    cursor: crosshair;
+  }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="NEON TIDE: explore Port Solano on foot and by car, take missions, lose the police and pay off a fifty thousand dollar debt"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<noscript>NEON TIDE needs JavaScript to run. Please enable it and reload.</noscript>
+<div id="wrap">
+  <canvas id="game" width="1280" height="720"></canvas>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

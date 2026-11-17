@@ -1,150 +1,134 @@
-// Screenshot scenes behind ?shot=start|drive|chase|mission. Each one stages a
-// real game state (title at dusk, night driving, a police chase, a harbor
-// firefight), then runs the real simulation forward a fixed number of steps
-// with a deterministic autopilot, so the frame is what playing looks like and
-// the same seed always gives the same frame.
+// NEON TIDE — shots.js
+// Deterministic autopilot for the four screenshots. Each shot starts the
+// game from a fresh seeded world, plays a short scripted sequence, then
+// raises window.__shotReady so the capture driver can take the frame.
+// The game itself never reads ?shot= outside this file.
+
 import { PLACES } from './config.js';
-import { makeCar, spawnEnemies } from './entities.js';
+import { createCar } from './entities.js';
+import { spawnTrafficCar } from './traffic.js';
+import { startMission } from './missions.js';
+import { burst } from './particles.js';
 
-const FRAMES = 300; // 5 seconds at 60 steps a second
-
-// A loop of waypoints around downtown for the driving autopilot.
-const DRIVE_LOOP = [
-  { x: 640, y: 520 }, { x: 1440, y: 520 }, { x: 1440, y: 1120 },
-  { x: 640, y: 1120 }, { x: 640, y: 520 },
-];
-
-function angleTo(ax, ay, bx, by) { return Math.atan2(by - ay, bx - ax); }
-
-export function setupShot(G, name) {
+// Configure the game state for one named shot. Called once at boot.
+export function applyShot(G, name) {
+  G.shot = { name, frames: 0, ready: false };
   const p = G.player;
-  G.shot = { name, frames: FRAMES, wp: 0 };
   if (name === 'start') {
-    // Title screen over the city at dusk.
-    G.clock = 18 * 60 + 30;
-    p.x = PLACES.club.x;
-    p.y = PLACES.club.y + 80;
-    p.angle = 0;
-    G.camera.x = p.x;
-    G.camera.y = p.y;
+    // Title screen over the city at sunset.
     G.mode = 'title';
-    return 'title';
-  }
-  if (name === 'drive') {
-    // Night drive in the Vortex GT through downtown, wanted 2 stars.
-    G.clock = 22 * 60;
-    p.x = 640; p.y = 520;
-    const car = makeCar(G, 'sport', 640, 520, 0, 'player');
-    G.cars.push(car);
-    p.car = car;
-    p.heat = 60;
-    G.camera.x = p.x; G.camera.y = p.y;
+    G.time = 18.4;
+    G.camera.x = 900;
+    G.camera.y = 450;
+    G.shot.need = 70;
+  } else if (name === 'drive') {
+    // Night drive downtown in the sport car, wanted 2 stars, traffic around.
     G.mode = 'play';
-    return 'play';
-  }
-  if (name === 'chase') {
-    // Three-star chase: cruisers on the tail, a roadblock ahead, crash sparks.
-    G.clock = 21 * 60 + 30;
-    p.x = 1040; p.y = 820;
-    const car = makeCar(G, 'sport', 1040, 820, 0, 'player');
-    // Staged chase: the car is tough enough to survive five seconds of ramming.
-    car.hp = 400;
-    car.maxHp = 400;
+    G.time = 22.0;
+    const car = createCar(G, 'sport', 1000, 600, 0, { driver: 'player' });
     G.cars.push(car);
-    p.car = car;
-    p.heat = 130;
+    p.inCar = car.id;
+    p.x = car.x;
+    p.y = car.y;
+    G.heat = 210;
+    G.wanted = 2;
+    for (let i = 0; i < 6; i += 1) spawnTrafficCar(G, p.x, p.y);
+    // Mission 2's objective reads well over a driving shot.
+    startMission(G, 1);
+    G.camera.x = p.x - 640;
+    G.camera.y = p.y - 360;
+    G.shot.need = 150;
+  } else if (name === 'chase') {
+    // Three-star police chase at night, cruisers on the tail.
+    G.mode = 'play';
+    G.time = 21.0;
+    const car = createCar(G, 'sport', 1400, 1000, 0, { driver: 'player' });
+    G.cars.push(car);
+    p.inCar = car.id;
+    p.x = car.x;
+    p.y = car.y;
+    // Mission 4's objective fits a chase; set the heat after it (it adds
+    // 320 of its own, and we want exactly 3 stars, not 5).
+    startMission(G, 3);
+    G.heat = 320;
+    G.wanted = 3;
     for (let i = 0; i < 2; i += 1) {
-      const cop = makeCar(G, 'cruiser', 1040 - 90 - i * 70, 820 + (i ? 26 : -26), 0, 'cop');
-      cop.targetSpeed = 400;
-      G.cars.push(cop);
-      G.cops.push({ kind: 'cruiser', car: cop, x: cop.x, y: cop.y, angle: 0, hp: 140, bustT: 0, down: false });
+      const cruiser = createCar(G, 'cruiser', car.x - 140 - i * 70, car.y + (i === 0 ? -30 : 30), 0, { driver: 'police' });
+      cruiser.speed = 380;
+      G.cars.push(cruiser);
     }
-    G.particles.crash(1040 + 60, 820 - 30);
-    G.camera.x = p.x; G.camera.y = p.y;
+    for (let i = 0; i < 4; i += 1) spawnTrafficCar(G, p.x, p.y);
+    G.camera.x = p.x - 640;
+    G.camera.y = p.y - 360;
+    G.shot.need = 170;
+  } else if (name === 'mission') {
+    // The harbor heist: mission 8, Deke on foot with a pistol, guards ahead.
     G.mode = 'play';
-    return 'play';
+    G.time = 17.6;
+    // Deke stands mid-frame (world x 640 centres him on screen); the
+    // guards hold the dock to his left, marker and all.
+    p.x = 640;
+    p.y = 1380;
+    p.weapon = 'pistol';
+    p.ammo = 48;
+    startMission(G, 7);
+    // Pull the guards into a visible cluster west of Deke.
+    for (const e of G.enemies) {
+      e.x = 380 + (e.x % 140);
+      e.y = 1340 + (e.y % 80);
+    }
+    G.camera.x = p.x - 640;
+    G.camera.y = p.y - 360;
+    G.shot.need = 110;
   }
-  // mission: harbor firefight at golden hour, mission 8 in progress.
-  G.clock = 16 * 60 + 40;
-  p.x = PLACES.harbor.x;
-  p.y = PLACES.harbor.y + 140;
-  p.weapon = 'pistol';
-  p.ammo = 96;
-  G.missions.startMission(7);
-  // Jump straight to the kill stage.
-  G.missions.M.stage = 1;
-  G.missions.M.killsAtStart = G.missionKills;
-  spawnEnemies(G, PLACES.harbor.x, PLACES.harbor.y, 6, 70);
-  G.camera.x = p.x; G.camera.y = p.y;
-  G.mode = 'play';
-  return 'play';
+  window.__shotReady = false;
 }
 
-// Drive the car toward the next waypoint on the downtown loop, swerving around
-// traffic directly ahead instead of ramming it.
-function driveAutopilot(G, input) {
-  const p = G.player;
-  const car = p.car;
-  if (!car) return;
-  const wp = DRIVE_LOOP[G.shot.wp % DRIVE_LOOP.length];
-  const d = Math.hypot(wp.x - car.x, wp.y - car.y);
-  if (d < 90) G.shot.wp += 1;
-  let tx = wp.x;
-  let ty = wp.y;
-  // Is a car sitting in our lane ahead? Swerve to the side with more room.
-  const fx = Math.cos(car.angle);
-  const fy = Math.sin(car.angle);
-  let blocked = false;
-  for (const other of G.cars) {
-    if (other === car) continue;
-    const dx = other.x - car.x;
-    const dy = other.y - car.y;
-    const ahead = dx * fx + dy * fy;
-    const side = Math.abs(-dx * fy + dy * fx);
-    if (ahead > 0 && ahead < 150 && side < 34) { blocked = true; break; }
-  }
-  if (blocked) {
-    const side = (G.shot.frames % 120 < 60) ? 1 : -1;
-    tx = car.x + fx * 160 - fy * 52 * side;
-    ty = car.y + fy * 160 + fx * 52 * side;
-  }
-  const want = angleTo(car.x, car.y, tx, ty);
-  let diff = ((want - car.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-  input.held.up = true;
-  input.held.left = diff < -0.08;
-  input.held.right = diff > 0.08;
-  input.held.down = false;
-}
-
-// On foot in the harbor: aim at the nearest living enemy and fire.
-function combatAutopilot(G, input) {
-  const p = G.player;
-  let best = null;
-  let bestD = Infinity;
-  for (const e of G.enemies) {
-    if (e.dead) continue;
-    const d = Math.hypot(e.x - p.x, e.y - p.y);
-    if (d < bestD) { bestD = d; best = e; }
-  }
-  if (best) {
-    p.angle = angleTo(p.x, p.y, best.x, best.y);
-    if (G.shot.frames % 20 === 0) {
-      // Simulate a mouse click at the enemy.
-      G.shootAt = { x: best.x, y: best.y };
+// Drive the scripted inputs for one frame. Returns true when the shot is
+// ready to capture.
+export function tickShot(G, dt) {
+  const s = G.shot;
+  if (!s || s.ready) return s?.ready ?? false;
+  s.frames += 1;
+  const input = G.input;
+  // Pin the wanted heat for the driving shots so the star count in the
+  // screenshot is exactly the one the shot is about (heat decays when the
+  // player is unseen, which would drop a star mid-shot).
+  if (s.name === 'drive') G.heat = 210;
+  if (s.name === 'chase') G.heat = 320;
+  if (s.name === 'start') {
+    // Slow pan across downtown at sunset.
+    G.camera.x = 900 + Math.sin(s.frames / 90) * 120;
+    G.camera.y = 450 + Math.cos(s.frames / 120) * 60;
+  } else if (s.name === 'drive' || s.name === 'chase') {
+    // Hold the gas and steer gently down the road.
+    input.setVirtual('KeyW', true);
+    if (s.frames > 60 && s.frames < 90) input.setVirtual('KeyA', true);
+    else input.setVirtual('KeyA', false);
+    if (s.name === 'chase' && s.frames === 100) {
+      // A near-miss spark burst sells the chase.
+      const pc = G.cars.find((c) => c.id === G.player.inCar);
+      if (pc) burst(G, pc.x + 30, pc.y + 14, { count: 10, speedMin: 80, speedMax: 220, life: 0.4, size: 3, color: '#ffb347' });
+    }
+  } else if (s.name === 'mission') {
+    // Aim at the nearest guard and fire once for a muzzle flash.
+    const e = G.enemies.find((en) => en.hp > 0);
+    if (e && s.frames > 40 && s.frames < 46) {
+      const a = Math.atan2(e.y - G.player.y, e.x - G.player.x);
+      G.player.aimAngle = a;
+      G.player.angle = a;
+      input.mouseX = G.player.x - G.camera.x + Math.cos(a) * 200;
+      input.mouseY = G.player.y - G.camera.y + Math.sin(a) * 200;
+      input.mouseDown = true;
+    } else {
+      input.mouseDown = false;
     }
   }
-}
-
-// One autopilot step. Returns true when the scene is ready to capture.
-export function shotStep(G, input) {
-  const shot = G.shot;
-  if (!shot) return false;
-  if (shot.name === 'drive' || shot.name === 'chase') driveAutopilot(G, input);
-  else if (shot.name === 'mission') combatAutopilot(G, input);
-  shot.frames -= 1;
-  if (shot.frames <= 0) {
+  if (s.frames >= s.need) {
+    s.ready = true;
+    input.clearVirtual();
+    input.mouseDown = false;
     window.__shotReady = true;
-    return true;
   }
-  return false;
+  return s.ready;
 }

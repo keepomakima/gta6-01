@@ -1,82 +1,99 @@
-// Keyboard and mouse input for NEON TIDE. Held keys are read every frame;
-// one-shot presses (enter car, punch, pause, radio, weapon swap) are queued as
-// flags and taken once by the loop, so a press between frames is never lost.
-// The mouse position is tracked in CSS pixels; main.js converts it to world
-// coordinates for aiming.
-export const ACT_CONFIRM = 1;
-export const ACT_PAUSE = 2;
-export const ACT_ENTER = 4;
-export const ACT_PUNCH = 8;
-export const ACT_RADIO = 16;
-export const ACT_WEAPON = 32;
-export const ACT_SHOOT = 64;
-
-const KEYMAP = {
-  KeyW: 'up', ArrowUp: 'up',
-  KeyS: 'down', ArrowDown: 'down',
-  KeyA: 'left', ArrowLeft: 'left',
-  KeyD: 'right', ArrowRight: 'right',
-  ShiftLeft: 'run', ShiftRight: 'run',
-  Space: 'brake',
-};
+// NEON TIDE — input.js
+// Keyboard + mouse state, tracked once per frame. The game reads this object
+// instead of touching DOM events directly, which also lets the screenshot
+// autopilot drive the same inputs synthetically.
 
 export function createInput(canvas) {
-  const held = { up: false, down: false, left: false, right: false, run: false, brake: false };
-  let actions = 0;
-  let mouseX = 0;
-  let mouseY = 0;
-  let mouseDown = false;
+  const input = {
+    keys: new Set(),
+    pressed: new Set(), // keys pressed since the last frame was consumed
+    mouseX: 0,
+    mouseY: 0,
+    mouseDown: false,
+    mousePressed: false,
+    // Virtual keys the autopilot can set (same names as real keys).
+    virtual: new Set(),
+    // True while the key is held, real or virtual.
+    down(code) {
+      return this.keys.has(code) || this.virtual.has(code);
+    },
+    // True once, on the frame the key went down.
+    hit(code) {
+      return this.pressed.has(code);
+    },
+    // True while any of the given keys is held.
+    any(codes) {
+      return codes.some((c) => this.down(c));
+    },
+    // Forget every held and pressed key (for example when the game pauses).
+    reset() {
+      this.keys.clear();
+      this.pressed.clear();
+      this.virtual.clear();
+      this.mouseDown = false;
+      this.mousePressed = false;
+    },
+    // Called at the end of each frame by the main loop.
+    endFrame() {
+      this.pressed.clear();
+      this.mousePressed = false;
+    },
+    // Autopilot helper: hold a virtual key.
+    setVirtual(code, on) {
+      if (on) this.virtual.add(code);
+      else this.virtual.delete(code);
+    },
+    clearVirtual() {
+      this.virtual.clear();
+    },
+  };
 
-  window.addEventListener('keydown', (event) => {
-    const name = KEYMAP[event.code];
-    if (name) {
-      held[name] = true;
-      event.preventDefault();
-      return;
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+      e.preventDefault();
     }
-    if (event.repeat) return;
-    if (event.code === 'Enter' || event.code === 'Space') actions |= ACT_CONFIRM;
-    else if (event.code === 'Escape' || event.code === 'KeyP') actions |= ACT_PAUSE;
-    else if (event.code === 'KeyE') actions |= ACT_ENTER;
-    else if (event.code === 'KeyF') actions |= ACT_PUNCH;
-    else if (event.code === 'KeyR') actions |= ACT_RADIO;
-    else if (event.code === 'Digit1' || event.code === 'Digit2') actions |= ACT_WEAPON;
-    else return;
-    event.preventDefault();
+    if (!e.repeat) input.pressed.add(e.code);
+    input.keys.add(e.code);
   });
-  window.addEventListener('keyup', (event) => {
-    const name = KEYMAP[event.code];
-    if (name) held[name] = false;
+  window.addEventListener('keyup', (e) => {
+    input.keys.delete(e.code);
   });
   window.addEventListener('blur', () => {
-    for (const k of Object.keys(held)) held[k] = false;
-    mouseDown = false;
+    input.keys.clear();
+    input.pressed.clear();
   });
-  canvas.addEventListener('pointermove', (event) => {
-    const rect = canvas.getBoundingClientRect();
-    mouseX = event.clientX - rect.left;
-    mouseY = event.clientY - rect.top;
-  });
-  canvas.addEventListener('pointerdown', (event) => {
-    mouseDown = true;
-    if (event.button === 0) actions |= ACT_SHOOT;
-    const rect = canvas.getBoundingClientRect();
-    mouseX = event.clientX - rect.left;
-    mouseY = event.clientY - rect.top;
-  });
-  window.addEventListener('pointerup', () => { mouseDown = false; });
 
-  return {
-    held,
-    get mouse() { return { x: mouseX, y: mouseY, down: mouseDown }; },
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-    // Steering: -1 left, 1 right, 0 neither or both.
-    steer() { return (held.right ? 1 : 0) - (held.left ? 1 : 0); },
-    // Throttle: 1 forward, -1 back, 0 none.
-    throttle() { return (held.up ? 1 : 0) - (held.down ? 1 : 0); },
-  };
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    input.mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    input.mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+  });
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      input.mouseDown = true;
+      input.mousePressed = true;
+    }
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) input.mouseDown = false;
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  return input;
+}
+
+// Movement intent from WASD / arrows, as a unit-ish vector.
+export function moveVector(input) {
+  let x = 0;
+  let y = 0;
+  if (input.down('KeyA') || input.down('ArrowLeft')) x -= 1;
+  if (input.down('KeyD') || input.down('ArrowRight')) x += 1;
+  if (input.down('KeyW') || input.down('ArrowUp')) y -= 1;
+  if (input.down('KeyS') || input.down('ArrowDown')) y += 1;
+  if (x !== 0 && y !== 0) {
+    const inv = 1 / Math.sqrt(2);
+    x *= inv;
+    y *= inv;
+  }
+  return { x, y };
 }
