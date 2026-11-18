@@ -1,10 +1,13 @@
-// NEON TIDE — entities.js
-// Entitas dunia: pemain Deke, mobil (parkir + dikemudikan + curian), pejalan
-// kaki, musuh geng, dan pickup (uang / ammo / armor). Fisika mobil memakai
-// dua titik as (depan-belakang) supaya tidak menempel gedung seperti v2.
-import { CAR_TYPES, WORLD_W, WORLD_H } from './config.js';
+// NEON TIDE v5 — entities.js
+// Entitas dunia: pemain Deke, mobil + motor (baru v5), pejalan kaki, musuh
+// geng, dan pickup. Fisika mobil memakai dua titik as (depan-belakang)
+// supaya tidak menempel gedung. NOS boost + upgrade garasi diterapkan di
+// driveCar. Ditulis fresh untuk v5.
+// Revisi v5.2: spikeMult diterapkan SETELAH clamp top speed supaya ban bocor
+// benar-benar memotong kecepatan, bukan tertimpa clamp berikutnya.
+import { CAR_TYPES, UPGRADES, WORLD_W, WORLD_H } from './config.js';
 import { clamp, dist } from './random.js';
-import { hitsBuilding, onRoad } from './world.js';
+import { hitsBuilding } from './world.js';
 
 let nextId = 1;
 
@@ -16,16 +19,22 @@ export function makePlayer(x, y) {
     owned: { fists: true, pistol: true, smg: false, shotgun: false },
     ammo: { pistol: 120, smg: 0, shotgun: 0 },
     driftScore: 0, nearMissScore: 0,
+    // Baru v5: upgrade garasi + tangki NOS milik pemain.
+    upgrades: { engine: 0, tires: 0, armor: 0, nos: 0 },
+    nos: 0, nosMax: 0,
   };
 }
 
 export function makeCar(type, x, y, angle = 0, opts = {}) {
   const t = CAR_TYPES[type];
+  const maxHp = Math.round(t.hp * (opts.armorMult ?? 1));
   return {
     id: nextId++, kind: 'car', type, x, y, angle, speed: 0,
-    cond: opts.cond ?? 100, parked: opts.parked ?? false, driver: opts.driver ?? null,
+    cond: opts.cond ?? 100, maxCond: maxHp, parked: opts.parked ?? false,
+    driver: opts.driver ?? null,
     color: opts.color ?? t.color, len: t.len, wid: t.wid, smokeT: 0,
-    ai: opts.ai ?? null, hornT: 0, skidT: 0,
+    ai: opts.ai ?? null, hornT: 0, skidT: 0, nosFlame: false,
+    spiked: false, spikeT: 0,
   };
 }
 
@@ -44,6 +53,7 @@ export function makeEnemy(x, y, opts = {}) {
     boss: opts.boss ?? false, angle: 0, fireT: 1 + Math.random() * 1.5,
     speed: opts.boss ? 95 : 78, label: opts.label ?? 'Tide Rat',
     shootT: 0, wanderA: Math.random() * Math.PI * 2,
+    sentry: opts.sentry ?? false, faceA: opts.faceA ?? 0, coneR: opts.coneR ?? 260,
   };
 }
 
@@ -64,29 +74,49 @@ export function movePlayerOnFoot(G, p, dir, dt) {
     // Mundur setengah langkah dan geser sepanjang dinding (slide, bukan macet).
     p.x -= dir.x * sp * dt;
     p.y -= dir.y * sp * dt;
-    const tryX = hitsBuilding(G.world, p.x + dir.x * sp * dt, p.y, 14);
-    if (!tryX) p.x += dir.x * sp * dt;
+    if (!hitsBuilding(G.world, p.x + dir.x * sp * dt, p.y, 14)) p.x += dir.x * sp * dt;
     else if (!hitsBuilding(G.world, p.x, p.y + dir.y * sp * dt, 14)) p.y += dir.y * sp * dt;
   }
 }
 
-// Fisika mobil: gas W, rem/mundur S, belok A/D, handbrake Space.
-// Tabrakan memakai dua titik as supaya mobil tidak nyangkut di gedung.
+// Fisika mobil/motor: gas W, rem/mundur S, belok A/D, handbrake Space,
+// NOS Shift (bila tangki terisi). Upgrade engine/tires/armor dari garasi.
 export function driveCar(G, car, dt) {
   const t = CAR_TYPES[car.type];
+  const p = G.player;
   const inp = G.input;
+  const eng = UPGRADES.engine.mult[p.upgrades.engine] ?? 1;
+  const tir = UPGRADES.tires.mult[p.upgrades.tires] ?? 1;
+  const top = t.top * eng;
   const fwd = (inp.down('KeyW') || inp.down('ArrowUp')) ? 1 : 0;
   const back = (inp.down('KeyS') || inp.down('ArrowDown')) ? 1 : 0;
   const left = (inp.down('KeyA') || inp.down('ArrowLeft')) ? 1 : 0;
   const right = (inp.down('KeyD') || inp.down('ArrowRight')) ? 1 : 0;
   const brake = inp.down('Space');
-  if (fwd) car.speed += t.accel * dt;
+  // NOS: Shift + tangki > 0 + sedang ngegas. Api biru + boost 1.45x.
+  car.nosFlame = false;
+  let boost = 1;
+  if (inp.nos && p.nos > 0 && fwd && car === p.inCar) {
+    boost = 1.45;
+    p.nos = Math.max(0, p.nos - 34 * dt);
+    car.nosFlame = true;
+    if (Math.random() < 0.6) G.particles.burst(car.x - Math.cos(car.angle) * car.len / 2, car.y - Math.sin(car.angle) * car.len / 2, 'nosflame', 2);
+  }
+  // Spike strip: ban bocor — top speed dipotong 55% selama beberapa detik.
+  let spikeMult = 1;
+  if (car.spiked) {
+    car.spikeT -= dt;
+    spikeMult = 0.45;
+    if (car.spikeT <= 0) car.spiked = false;
+    if (Math.random() < 0.3) G.particles.burst(car.x, car.y, 'smoke', 1);
+  }
+  if (fwd) car.speed += t.accel * boost * dt;
   if (back) car.speed -= (car.speed > 8 ? t.accel * 1.4 : t.accel * 0.55) * dt;
   if (brake) car.speed *= Math.max(0, 1 - 3.2 * dt);
   if (!fwd && !back) car.speed *= Math.max(0, 1 - 0.7 * dt);
-  car.speed = clamp(car.speed, -t.top * 0.45, t.top);
+  car.speed = clamp(car.speed, -top * 0.45, top * boost * spikeMult);
   const steer = (right - left) * (car.speed >= 0 ? 1 : -1);
-  car.angle += steer * t.turn * dt * clamp(Math.abs(car.speed) / 120, 0.25, 1);
+  car.angle += steer * t.turn * tir * dt * clamp(Math.abs(car.speed) / 120, 0.25, 1);
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
   // Cek tabrakan di titik as depan & belakang.
@@ -105,7 +135,7 @@ export function driveCar(G, car, dt) {
   }
   car.x = clamp(car.x, 20, WORLD_W - 20);
   car.y = clamp(car.y, 20, WORLD_H - 20);
-  // Bekas ban saat handbrake / belok tajam dalam kecepatan tinggi.
+  // Bekas ban + skor DRIFT saat handbrake / belok tajam dalam kecepatan tinggi.
   if ((brake || Math.abs(steer) > 0) && Math.abs(car.speed) > 240) {
     car.skidT += dt;
     if (car.skidT > 0.05) {
@@ -148,7 +178,7 @@ export function nearestCar(cars, x, y, r) {
   return best;
 }
 
-// Pemain naik mobil: sopir lari bila ada; wanted naik bila polisi melihat.
+// Pemain naik mobil/motor: sopir lari bila ada; wanted naik bila polisi melihat.
 export function enterCar(G, car) {
   const p = G.player;
   if (car.driver) {

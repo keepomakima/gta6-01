@@ -1,10 +1,13 @@
-// NEON TIDE — police.js
+// NEON TIDE v5 — police.js
 // Sistem wanted 0-5 bintang + respons PSPD: foot cop mengejar dan menangkap,
 // cruiser mengejar dan meramming mobil pemain, roadblock di 3 bintang ke
-// atas, wanted turun bila lolos dari pandangan. Busted / Wasted + denda.
+// atas, wanted turun bila lolos dari pandangan. Baru v5: spike strip di
+// wanted 4+ (ban bocor, top speed -55%) dan manuver PIT — cruiser menabrak
+// sisi belakang mobil untuk memutarnya. Busted / Wasted + denda.
 // damagePlayer tinggal di sini (bukan combat.js) — pelajaran dari bug v2.
+// Revisi v5.2: PIT hanya aktif saat pemain ngebut (>260) dan wanted >= 3.
 import { CAR_TYPES } from './config.js';
-import { clamp, dist } from './random.js';
+import { clamp, dist, angleDiff } from './random.js';
 import { makeCar } from './entities.js';
 import { enemyShoot } from './combat.js';
 
@@ -20,6 +23,7 @@ export function makeCruiser(x, y) {
   c.kind = 'cruiser';
   c.name = 'Unit ' + (10 + Math.floor(Math.random() * 80));
   c.ramT = 0;
+  c.pitT = 0;
   return c;
 }
 
@@ -43,6 +47,7 @@ export function setWanted(G, n) {
   if (n === 0) {
     G.police = G.police.filter((u) => u.kind === 'roadblock');
     G.roadblock = null;
+    G.spike = null;
     if (G.heli) G.heli.active = false;
   }
 }
@@ -127,6 +132,29 @@ export function updatePolice(G, dt) {
   }
   if (G.roadblock) G.roadblock.t += dt;
 
+  // Spike strip baru v5: wanted 4+, dipasang di depan pemain, sekali pakai.
+  if (w >= 4 && !G.spike && G.spikeT <= 0) {
+    const ahead = p.inCar ? p.inCar.angle : p.angle;
+    G.spike = { x: p.x + Math.cos(ahead) * 380, y: p.y + Math.sin(ahead) * 380, angle: ahead + Math.PI / 2, t: 0 };
+    G.spikeT = 9;
+    G.dialog = { name: 'PSPD Dispatch', role: 'Radio Polisi', text: 'Spike strip dipasang! Jangan lewati garis itu!', t: 0 };
+  }
+  if (G.spikeT > 0) G.spikeT -= dt;
+  if (G.spike) {
+    G.spike.t += dt;
+    if (p.inCar && dist(p.x, p.y, G.spike.x, G.spike.y) < 34 && !p.inCar.spiked) {
+      p.inCar.spiked = true;
+      p.inCar.spikeT = 5;
+      p.inCar.cond = Math.max(0, p.inCar.cond - 12);
+      G.spike = null;
+      G.shake = Math.min(12, G.shake + 8);
+      G.audio.sfx('crash');
+      G.particles.burst(p.x, p.y, 'spark', 10);
+      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Ban bocor! Spike strip itu kena aku.', t: 0 };
+    }
+    if (G.spike && G.spike.t > 14) G.spike = null;
+  }
+
   // Gerakkan unit.
   for (const u of G.police) {
     if (u.kind === 'cop') updateFootCop(G, u, dt);
@@ -173,15 +201,14 @@ function updateCruiser(G, c, dt) {
   const target = p.inCar || p;
   const d = dist(c.x, c.y, target.x, target.y);
   const want = Math.atan2(target.y - c.y, target.x - c.x);
-  let da = want - c.angle;
-  while (da > Math.PI) da -= Math.PI * 2;
-  while (da < -Math.PI) da += Math.PI * 2;
+  const da = angleDiff(c.angle, want);
   c.angle += clamp(da, -2.4 * dt, 2.4 * dt);
   const top = CAR_TYPES.cruiser.top * 0.92;
   c.speed = Math.min(top, c.speed + 300 * dt);
   c.x += Math.cos(c.angle) * c.speed * dt;
   c.y += Math.sin(c.angle) * c.speed * dt;
   c.ramT -= dt;
+  c.pitT -= dt;
   // Ramming: tabrak mobil pemain -> kerusakan + shake.
   if (p.inCar && d < 52 && c.ramT <= 0) {
     c.ramT = 1.0;
@@ -192,6 +219,18 @@ function updateCruiser(G, c, dt) {
     if (p.inCar.cond <= 0) {
       G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Mobilku hancur! Aku harus jalan kaki.', t: 0 };
     }
+  }
+  // PIT baru v5: cruiser di samping belakang mobil pemain yang ngebut —
+  // dorong sisi belakang, putar mobil 40 derajat, potong kecepatan.
+  if (p.inCar && Math.abs(p.inCar.speed) > 260 && d < 62 && d > 34 && c.pitT <= 0 && G.wantedLevel >= 3) {
+    c.pitT = 2.5;
+    p.inCar.angle += 0.7;
+    p.inCar.speed *= 0.55;
+    p.inCar.cond = Math.max(0, p.inCar.cond - 6);
+    G.shake = Math.min(14, G.shake + 9);
+    G.audio.sfx('crash');
+    G.particles.burst(p.x, p.y, 'spark', 10);
+    G.popups.push({ text: 'PIT MANEUVER!', amount: 0, t: 0, x: p.x, y: p.y - 30 });
   }
   // Cruiser menabrak pemain jalan kaki -> damage.
   if (!p.inCar && d < 30) {
@@ -217,6 +256,9 @@ export function policePanelUnits(G) {
   }
   if (G.roadblock) {
     units.push({ name: 'Roadblock', meters: Math.round(dist(G.roadblock.x, G.roadblock.y, p.x, p.y) / 4), status: 'ROADBLOCK' });
+  }
+  if (G.spike) {
+    units.push({ name: 'Spike Strip', meters: Math.round(dist(G.spike.x, G.spike.y, p.x, p.y) / 4), status: 'SPIKE' });
   }
   return units.slice(0, 5);
 }

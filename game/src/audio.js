@@ -1,7 +1,9 @@
-// NEON TIDE — audio.js
+// NEON TIDE v5 — audio.js
 // Radio WebAudio prosedural (3 station, musik orisinal) + SFX sintetis.
 // Semua suara dibuat dari oscillator/noise — tanpa file audio, tanpa network.
 // AudioContext dibuat malas (setelah gestur pertama) supaya tidak diblokir.
+// Baru v5: SFX 'nos' (desis boost) dan 'rain' (noise hujan pelan).
+// Revisi v5.2: tone() memakai exponentialRamp supaya tidak ada klik audio.
 export class GameAudio {
   constructor() {
     this.ctx = null;
@@ -43,7 +45,6 @@ export class GameAudio {
   }
 
   // Radio: jadwalkan not synthwave / chill / talk-blip per station.
-  // Revisi: interval 240ms, nada dipilih dari tangga nada station aktif.
   startRadio() {
     if (!this.ctx || this.musicTimer) return;
     const scales = [
@@ -142,6 +143,8 @@ export class GameAudio {
       case 'save': this.tone(784, 0.12, 'sine', 0.1); setTimeout(() => this.tone(1047, 0.18, 'sine', 0.1), 120); break;
       case 'empty': this.tone(220, 0.06, 'square', 0.08); break;
       case 'station': this.tone(1047, 0.08, 'sine', 0.08); break;
+      case 'nos': this.noise(0.5, 0.2, 5000); this.tone(1200, 0.4, 'sawtooth', 0.05); break;
+      case 'rain': this.noise(1.2, 0.04, 2500); break;
       default: break;
     }
   }

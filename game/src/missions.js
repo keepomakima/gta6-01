@@ -1,11 +1,14 @@
-// NEON TIDE — missions.js
-// 12 misi berurutan NEON TIDE (8 lama + 4 baru v4): marker, waypoint, dialog,
-// timer, dan reward. Setiap misi punya stage + progress 0..1 untuk HUD.
-// Misi gagal bisa diulang; progres tersimpan di localStorage.
+// NEON TIDE v5 — missions.js
+// 15 misi berurutan NEON TIDE (12 lama + 3 baru v5: Midnight Run, Silent
+// Pier, Neon Mile): marker, waypoint, dialog, timer, dan reward. Setiap misi
+// punya stage + progress 0..1 untuk HUD. Misi gagal bisa diulang; progres
+// tersimpan di localStorage. Ditulis fresh untuk v5.
+// Revisi v5.2: completeMission ambang 15 (bukan 12) — finale kini Neon Mile.
 import { MISSION_DEFS, PLACES } from './config.js';
 import { dist } from './random.js';
-import { makeEnemy, makePickup } from './entities.js';
+import { makeEnemy } from './entities.js';
 import { setWanted, raiseWanted } from './police.js';
+import { sentrySees } from './combat.js';
 
 const DIALOGS = {
   1: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Deke. Lima puluh ribu dolar, dan kau pulang tanpa apa-apa. Kerja untukku — mulai sekarang.' },
@@ -20,7 +23,17 @@ const DIALOGS = {
   10: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Heist butuh peralatan. Kumpulkan tiga crate di container yard.' },
   11: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Malam ini kita rampok vault pelabuhan. Lumpuhkan penjaga, lalu kabur!' },
   12: { name: 'Deke Marlowe', role: 'Protagonis', text: 'Rook. Semua ini berakhir malam ini. Di beach house-nya.' },
+  13: { name: 'Vex', role: 'Pembalap Liar', text: 'Getaway berantai: runway, kasino, lalu klub — 90 detik. NOS-mu penuh, kan?' },
+  14: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Pier Office dijaga sentri. Jangan masuk cone pandangan mereka. Diam-diam.' },
+  15: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Casino Solano malam ini. Ambil uangnya, kabur ke airfield — heli pasti datang.' },
 };
+
+// Checkpoint getaway misi 13: runway -> kasino -> klub.
+export const MIDNIGHT_STOPS = [
+  { x: 2015, y: 1120, label: 'Runway 27' },
+  { x: 1200, y: 1500, label: 'Casino Solano' },
+  { x: 620, y: 300, label: 'Kestrel Club' },
+];
 
 export function startMission(G, id) {
   const def = MISSION_DEFS[id - 1];
@@ -34,7 +47,6 @@ export function startMission(G, id) {
 }
 
 function setupMission(G, m) {
-  const p = G.player;
   switch (m.id) {
     case 3: m.timer = 75; break; // Harbor Run: 75 detik
     case 4: setWanted(G, 3); spawnHeatCops(G); break; // Lose the Heat mulai 3★
@@ -51,6 +63,9 @@ function setupMission(G, m) {
     case 10: m.data.crates = [false, false, false]; break;
     case 11: spawnGang(G, PLACES.vault.x, PLACES.vault.y, 5); raiseWanted(G, 2, 'heist terlihat'); break;
     case 12: spawnBoss(G); raiseWanted(G, 1, 'Rook memanggil anak buahnya'); break;
+    case 13: m.timer = 90; m.data.stop = 0; break; // Midnight Run: 90 detik, 3 stop
+    case 14: spawnSentries(G); m.data.detect = 0; break; // Silent Pier
+    case 15: spawnGang(G, PLACES.casino.x, PLACES.casino.y, 3); m.data.grabbed = false; break;
     default: break;
   }
 }
@@ -69,7 +84,7 @@ export function spawnGang(G, x, y, n) {
   for (let i = 0; i < n; i += 1) {
     const a = (i / n) * Math.PI * 2;
     // Clamp ke dalam dunia: vault di tepi selatan, radius spawn tidak boleh
-    // melempar musuh keluar peta / luar layar (bug M11 percobaan pertama).
+    // melempar musuh keluar peta (bug M11 percobaan pertama v4).
     const ex = Math.max(60, Math.min(2340, x + Math.cos(a) * 90));
     const ey = Math.max(60, Math.min(1540, y + Math.sin(a) * 90));
     G.enemies.push(makeEnemy(ex, ey, { label: 'Tide Rat' }));
@@ -85,10 +100,23 @@ function spawnBoss(G) {
   const gc = { x: 2300, y: 1380 };
   for (let i = 0; i < 3; i += 1) {
     const a = (i / 3) * Math.PI * 2;
-    // Clamp: arena di tepi timur pantai, jangan sampai guard keluar dunia.
     const gx = Math.max(60, Math.min(2340, gc.x + Math.cos(a) * 110));
     const gy = Math.max(60, Math.min(1540, gc.y + Math.sin(a) * 110));
     G.enemies.push(makeEnemy(gx, gy, { label: 'Rook Guard' }));
+  }
+}
+
+// Sentry misi 14: 4 penjaga di sekitar Pier Office, cone pandang 260px.
+function spawnSentries(G) {
+  G.enemies = [];
+  const spots = [
+    { x: 500, y: 1440, faceA: Math.PI },
+    { x: 340, y: 1560, faceA: 0 },
+    { x: 520, y: 1560, faceA: -Math.PI / 2 },
+    { x: 420, y: 1400, faceA: Math.PI / 2 },
+  ];
+  for (const s of spots) {
+    G.enemies.push(makeEnemy(s.x, s.y, { sentry: true, faceA: s.faceA, coneR: 260, label: 'Sentry' }));
   }
 }
 
@@ -118,6 +146,12 @@ export function missionTarget(G) {
     }
     case 11: return m.stage === 0 ? { x: P.vault.x, y: P.vault.y, label: 'Harbor Vault' } : { x: P.garage.x, y: P.garage.y, label: 'Kabur ke garasi!' };
     case 12: return { x: P.bossArena.x, y: P.bossArena.y, label: "Rook's Beach House" };
+    case 13: {
+      const s = MIDNIGHT_STOPS[Math.min(m.data.stop || 0, 2)];
+      return { x: s.x, y: s.y, label: 'Stop ' + ((m.data.stop || 0) + 1) + '/3 — ' + s.label };
+    }
+    case 14: return { x: P.pierOffice.x, y: P.pierOffice.y, label: 'Pier Office (stealth)' };
+    case 15: return m.stage === 0 ? { x: P.casino.x, y: P.casino.y, label: 'Casino Solano — ambil uang' } : { x: P.airfield.x, y: P.airfield.y, label: 'Kabur ke Airfield!' };
     default: return null;
   }
 }
@@ -139,6 +173,9 @@ export function missionStageText(G) {
     case 10: return 'Crate: ' + (m.data.crates || []).filter(Boolean).length + '/3 dikumpulkan';
     case 11: return m.stage === 0 ? 'Lumpuhkan penjaga vault: ' + G.enemies.filter((e) => e.alive).length + ' tersisa' : 'Kabur ke garasi Rosa!';
     case 12: return 'Kalahkan Boss Rook: ' + G.enemies.filter((e) => e.alive).length + ' musuh tersisa';
+    case 13: return 'Stop ' + ((m.data.stop || 0) + 1) + '/3 — ' + Math.ceil(m.timer) + ' dtk tersisa';
+    case 14: return 'Stealth: deteksi ' + Math.floor(m.data.detect || 0) + '% — hindari cone kuning';
+    case 15: return m.stage === 0 ? 'Ambil uang kasino — hati-hati penjaga' : 'Kabur ke Airfield! Wanted ' + G.wantedLevel + '★';
     default: return '';
   }
 }
@@ -271,6 +308,52 @@ export function updateMission(G, dt) {
       if (left === 0) return completeMission(G, m);
       break;
     }
+    case 13: {
+      // Midnight Run: 3 stop berantai, timer 90 detik, NOS dianjurkan.
+      m.timer -= dt;
+      m.progress = (m.data.stop || 0) / 3 + (1 - Math.max(0, m.timer) / 90) * 0.1;
+      const s = MIDNIGHT_STOPS[Math.min(m.data.stop || 0, 2)];
+      if (near(s.x, s.y, 140)) {
+        m.data.stop = (m.data.stop || 0) + 1;
+        G.audio.sfx('pickup');
+        p.money += 200;
+        if (m.data.stop >= 3) return completeMission(G, m);
+        G.dialog = { name: 'Vex', role: 'Pembalap Liar', text: 'Stop ' + m.data.stop + '/3! Lanjut ke ' + MIDNIGHT_STOPS[m.data.stop].label + '!', t: 0 };
+      }
+      if (m.timer <= 0) { failMission(G, m, 'Timer habis — getaway gagal.'); return false; }
+      break;
+    }
+    case 14: {
+      // Silent Pier: deteksi naik saat terlihat sentry, turun saat sembunyi.
+      let seen = false;
+      for (const e of G.enemies) {
+        if (e.alive && e.sentry && sentrySees(e, p.x, p.y)) { seen = true; break; }
+      }
+      if (seen) {
+        m.data.detect = Math.min(100, (m.data.detect || 0) + dt * 34);
+        if (m.data.detect >= 100) { failMission(G, m, 'Ketahuan sentri! Infiltrasi gagal.'); return false; }
+      } else {
+        m.data.detect = Math.max(0, (m.data.detect || 0) - dt * 18);
+      }
+      m.progress = 1 - Math.min(1, dist(p.x, p.y, PLACES.pierOffice.x, PLACES.pierOffice.y) / 1200);
+      if (near(PLACES.pierOffice.x, PLACES.pierOffice.y, 70)) return completeMission(G, m);
+      break;
+    }
+    case 15: {
+      // Neon Mile: ambil uang kasino (stage 0), lalu kabur ke airfield (stage 1).
+      if (m.stage === 0) {
+        m.progress = 0.4 * (1 - Math.min(1, dist(p.x, p.y, PLACES.casino.x, PLACES.casino.y) / 1200));
+        if (near(PLACES.casino.x, PLACES.casino.y, 110)) {
+          m.stage = 1; p.money += 4000;
+          setWanted(G, 4);
+          G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Uang kasino didapat! Kabur ke airfield — heli sudah di udara!', t: 0 };
+        }
+      } else {
+        m.progress = 0.4 + 0.6 * (1 - Math.min(1, dist(p.x, p.y, PLACES.airfield.x, PLACES.airfield.y) / 1600));
+        if (near(PLACES.airfield.x, PLACES.airfield.y, 140)) return completeMission(G, m);
+      }
+      break;
+    }
     default: break;
   }
   G.missionMarker = missionTarget(G);
@@ -288,9 +371,9 @@ export function completeMission(G, m) {
   G.mission = null;
   G.missionMarker = null;
   G.saveGame();
-  if (done >= 12) {
+  if (done >= 15) {
     G.mode = 'complete';
-    G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Rook tumbang. Pelabuhan ini milik kita sekarang, Deke. Utangmu lunas.', t: 0 };
+    G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Kasino dirampok, Rook tumbang, utang lunas. Port Solano milik kita, Deke.', t: 0 };
     return true;
   }
   G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Misi ' + done + ' selesai. Hadiah $' + m.reward + '. Misi berikutnya sudah menunggumu.', t: 0 };

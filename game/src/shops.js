@@ -1,7 +1,9 @@
-// NEON TIDE — shops.js
-// Toko senjata Ironworks Arms (baru v4) + 2 safehouse (baru v4).
-// Toko: beli SMG / shotgun / ammo / armor dengan uang. Safehouse: heal penuh,
-// save ke localStorage, dan perbaiki mobil (garasi).
+// NEON TIDE v5 — shops.js
+// Toko senjata Ironworks Arms + 2 safehouse. Toko: beli SMG / shotgun /
+// ammo / armor dengan uang. Safehouse: heal penuh, save ke localStorage,
+// dan perbaiki mobil. Garasi Rosa (upgrade + NOS) tinggal di garage.js.
+// Ditulis fresh untuk v5.
+// Revisi v5.2: buySelected langsung mengganti senjata aktif setelah beli.
 import { SHOP_ITEMS, PLACES, WEAPONS } from './config.js';
 import { dist } from './random.js';
 
@@ -22,7 +24,7 @@ export function tryOpenShop(G) {
   return false;
 }
 
-// Beli item yang sedang dipilih (Enter di toko). Revisi: beli senjata langsung
+// Beli item yang sedang dipilih (Enter di toko). Beli senjata langsung
 // mengganti senjata aktif supaya bisa dipakai di combat tanpa buka menu lagi.
 export function buySelected(G) {
   const p = G.player;

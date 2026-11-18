@@ -1,7 +1,10 @@
-// NEON TIDE — combat.js
+// NEON TIDE v5 — combat.js
 // Combat: tinju jarak dekat, pistol / SMG / shotgun dengan aim mouse, ammo,
 // musuh menembak balik, musuh mati menjatuhkan uang / ammo / armor, dan
-// tembakan musuh ke mobil pemain. Damage ke pemain tinggal di police.js.
+// tembakan musuh ke mobil pemain. Sentry stealth (misi 14) tidak mengejar —
+// mereka patroli dan mendeteksi lewat cone penglihatan. Damage ke pemain
+// tinggal di police.js. Ditulis fresh untuk v5.
+// Revisi v5.2: sentrySees diekspor untuk missions.js (meter deteksi) dan render.js (cone).
 import { WEAPONS } from './config.js';
 import { dist } from './random.js';
 import { makePickup } from './entities.js';
@@ -42,8 +45,8 @@ export function playerShoot(G) {
   G.shake = Math.min(8, G.shake + 1.5);
 }
 
-// Pukulan tinju: musuh dalam 42px kena damage. Revisi: pukulan ke polisi
-// juga menaikkan wanted — memukul aparat selalu ada konsekuensinya.
+// Pukulan tinju: musuh dalam 42px kena damage. Pukulan ke polisi juga
+// menaikkan wanted — memukul aparat selalu ada konsekuensinya.
 export function playerPunch(G) {
   const p = G.player;
   if (p.fireT > 0 || p.inCar) return;
@@ -135,11 +138,28 @@ function hurtEnemy(G, e, dmg) {
   }
 }
 
+// Apakah sentry melihat pemain? Di dalam cone (jarak + sudut pandang).
+export function sentrySees(sentry, px, py) {
+  const d = dist(sentry.x, sentry.y, px, py);
+  if (d > sentry.coneR) return false;
+  const want = Math.atan2(py - sentry.y, px - sentry.x);
+  let da = want - sentry.faceA;
+  while (da > Math.PI) da -= Math.PI * 2;
+  while (da < -Math.PI) da += Math.PI * 2;
+  return Math.abs(da) < 0.55;
+}
+
 // Update musuh: kejar pemain bila dekat, tembak bila dalam jarak.
+// Sentry (misi 14) tidak mengejar: patroli memutar arah pandang.
 export function updateEnemies(G, dt) {
   const p = G.player;
   for (const e of G.enemies) {
     if (!e.alive) continue;
+    if (e.sentry) {
+      e.faceA += dt * 0.5; // patroli: sapu pandangan perlahan
+      e.angle = e.faceA;
+      continue;
+    }
     const d = dist(e.x, e.y, p.x, p.y);
     e.fireT -= dt;
     if (d < 520) {

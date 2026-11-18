@@ -1,15 +1,17 @@
-// NEON TIDE — render.js
+// NEON TIDE v5 — render.js (bagian 1: dunia)
 // Semua gambar canvas: kota (jalan, gedung berjendela menyala, neon, palem,
-// kontainer, pantai), mobil + lampu depan malam, heli + spotlight cone,
-// pejalan kaki, musuh, pickup, marker misi — dan HUD overhaul v4:
-// mission card, panel police response, slot senjata, bar HP/armor/respect,
-// speedometer besar, radio, distrik + jam, uang + utang, bintang wanted,
-// dialog karakter berpotret, popup skor, dan minimap.
-import { WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_HALF, CAR_TYPES, WEAPONS, SHOP_ITEMS, MISSION_DEFS, PLACES, DEBT_TOTAL } from './config.js';
+// kontainer, pantai, runway airfield + pesawat, kasino Neon Mile), mobil +
+// motor + lampu depan malam, heli + spotlight cone, pejalan kaki, musuh +
+// cone sentry, pickup, marker misi, spike strip, dan hujan.
+// Ditulis fresh untuk v5.
+// Revisi v5.2: drawRain dipanggil setelah night overlay supaya tetes hujan
+// tetap terlihat di atas vignette malam.
+import { WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_HALF, CAR_TYPES, WEAPONS, SHOP_ITEMS, UPGRADES, MISSION_DEFS, PLACES, DEBT_TOTAL } from './config.js';
 import { dist } from './random.js';
 import { districtAt } from './world.js';
 import { missionStageText } from './missions.js';
 import { policePanelUnits } from './police.js';
+import { isRaining } from './weather.js';
 
 const NEON_SIGNS = [
   { x: 765, y: 262, text: 'KESTREL', color: '#ff2e88' },
@@ -17,6 +19,10 @@ const NEON_SIGNS = [
   { x: 1365, y: 657, text: "ROSA'S", color: '#22e6ff' },
   { x: 2230, y: 1072, text: 'NEON TIDE MOTEL', color: '#ff2e88' },
   { x: 755, y: 932, text: 'PSPD', color: '#4d8dff' },
+  { x: 1200, y: 1462, text: 'CASINO SOLANO', color: '#ff2e88' },
+  { x: 890, y: 1472, text: 'NEON SLOTS', color: '#ffc233' },
+  { x: 1425, y: 1472, text: 'TIDE ROYALE', color: '#22e6ff' },
+  { x: 1995, y: 892, text: 'SOLANO AIRFIELD', color: '#ffd34d' },
 ];
 
 export function isNight(hour) { return hour < 6 || hour >= 19; }
@@ -41,18 +47,27 @@ export function drawWorld(ctx, G) {
   // Pelabuhan selatan (beton dok).
   ctx.fillStyle = night ? '#2a2724' : '#4a4640';
   ctx.fillRect(-cam.x, 1465 - cam.y, WORLD_W, WORLD_H - 1465);
+  // Neon Mile: tanah ungu gelap.
+  ctx.fillStyle = night ? '#2a1230' : '#4a2350';
+  ctx.fillRect(575 - cam.x, 1465 - cam.y, 990, WORLD_H - 1465);
+  // Airfield: apron abu-abu.
+  ctx.fillStyle = night ? '#2e323c' : '#565c66';
+  ctx.fillRect(1865 - cam.x, 865 - cam.y, 300, 510);
   // Taman Palm Court.
   ctx.fillStyle = night ? '#1e3320' : '#4d7a3a';
   ctx.fillRect(365 - cam.x, 1065 - cam.y, 210, 110);
 
   drawRoads(ctx, cam);
+  drawRunway(ctx, G);
   drawContainers(ctx, G);
+  drawPlanes(ctx, G);
   drawBuildings(ctx, G, night);
   drawPalms(ctx, G);
   drawNeonSigns(ctx, G, night);
   G.particles.draw(ctx, cam);
   drawPickups(ctx, G);
   drawMissionMarker(ctx, G);
+  drawSpike(ctx, G);
   drawPeds(ctx, G);
   drawEnemies(ctx, G);
   drawCars(ctx, G, night);
@@ -61,6 +76,7 @@ export function drawWorld(ctx, G) {
   drawHeli(ctx, G);
   drawBullets(ctx, G);
   if (night) drawNightOverlay(ctx, G);
+  if (isRaining(G)) drawRain(ctx, G);
 }
 
 function drawRoads(ctx, cam) {
@@ -88,6 +104,26 @@ function drawRoads(ctx, cam) {
   ctx.setLineDash([]);
 }
 
+// Runway 27 airfield (v5 baru): aspal gelap + garis tengah putih + nomor.
+function drawRunway(ctx, G) {
+  const cam = G.cam;
+  ctx.fillStyle = '#1f2126';
+  ctx.fillRect(1880 - cam.x, 1090 - cam.y, 270, 60);
+  ctx.fillStyle = '#e8e8e8';
+  for (let x = 1890; x < 2140; x += 30) ctx.fillRect(x - cam.x, 1117 - cam.y, 16, 6);
+  ctx.font = 'bold 22px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e8e8e8';
+  ctx.fillText('27', 1910 - cam.x, 1135 - cam.y);
+  ctx.fillText('27', 2120 - cam.x, 1135 - cam.y);
+  // Lampu runway (malam: titik kuning menyala).
+  ctx.fillStyle = isNight(G.clockHour) ? '#ffd34d' : '#8a8a7a';
+  for (let x = 1885; x <= 2145; x += 26) {
+    ctx.beginPath(); ctx.arc(x - cam.x, 1092 - cam.y, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x - cam.x, 1148 - cam.y, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
 function drawContainers(ctx, G) {
   const cam = G.cam;
   for (const c of G.world.containers) {
@@ -98,6 +134,26 @@ function drawContainers(ctx, G) {
     ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
     ctx.strokeStyle = 'rgba(0,0,0,0.4)';
     ctx.strokeRect(-c.w / 2, -c.h / 2, c.w, c.h);
+    ctx.restore();
+  }
+}
+
+// Pesawat parkir di apron airfield (v5 baru).
+function drawPlanes(ctx, G) {
+  const cam = G.cam;
+  for (const pl of G.world.planes) {
+    const sx = pl.x - cam.x, sy = pl.y - cam.y;
+    if (sx < -120 || sx > 1400 || sy < -80 || sy > 800) continue;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(pl.angle);
+    ctx.fillStyle = pl.color;
+    ctx.beginPath(); ctx.ellipse(0, 0, 52, 10, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2e7fc9';
+    ctx.fillRect(-30, -22, 12, 44); // sayap
+    ctx.fillRect(18, -16, 10, 32); // ekor
+    ctx.fillStyle = '#1c2733';
+    ctx.fillRect(38, -5, 12, 10); // kokpit
     ctx.restore();
   }
 }
@@ -233,6 +289,24 @@ function drawMissionMarker(ctx, G) {
   }
 }
 
+// Spike strip polisi (v5 baru): garis paku kuning-hitam melintang jalan.
+function drawSpike(ctx, G) {
+  if (!G.spike) return;
+  const cam = G.cam;
+  const sx = G.spike.x - cam.x, sy = G.spike.y - cam.y;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(G.spike.angle);
+  for (let i = -5; i <= 5; i += 1) {
+    ctx.fillStyle = i % 2 === 0 ? '#ffd34d' : '#111';
+    ctx.fillRect(i * 8 - 4, -6, 8, 12);
+  }
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('SPIKE', 0, -12);
+  ctx.restore();
+}
+
 function drawPeds(ctx, G) {
   const cam = G.cam;
   for (const ped of G.peds) {
@@ -251,7 +325,18 @@ function drawEnemies(ctx, G) {
     if (!e.alive) continue;
     const sx = e.x - cam.x, sy = e.y - cam.y;
     if (sx < -40 || sx > 1320 || sy < -40 || sy > 760) continue;
-    ctx.fillStyle = e.boss ? '#8a1a2e' : '#a33c2e';
+    // Cone penglihatan sentry (v5 baru, misi 14): kuning transparan.
+    if (e.sentry) {
+      ctx.fillStyle = 'rgba(255,211,77,0.16)';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.arc(sx, sy, e.coneR, e.faceA - 0.55, e.faceA + 0.55);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,211,77,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.fillStyle = e.boss ? '#8a1a2e' : e.sentry ? '#7a5a00' : '#a33c2e';
     ctx.beginPath(); ctx.arc(sx, sy, e.boss ? 16 : 11, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ffd76a';
     ctx.beginPath(); ctx.arc(sx, sy - 4, 5, 0, Math.PI * 2); ctx.fill();
@@ -273,6 +358,20 @@ function drawCarShape(ctx, car, sx, sy, night) {
   // Bayangan.
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.fillRect(-car.len / 2 + 3, -car.wid / 2 + 4, car.len, car.wid);
+  // Motor (v5 baru): bentuk ramping + pengendara.
+  if (car.type === 'bike') {
+    ctx.fillStyle = car.color;
+    ctx.beginPath();
+    ctx.roundRect(-car.len / 2, -car.wid / 2, car.len, car.wid, 5);
+    ctx.fill();
+    ctx.fillStyle = '#1c2733';
+    ctx.beginPath(); ctx.arc(-2, 0, 6, 0, Math.PI * 2); ctx.fill(); // pengendara
+    ctx.fillStyle = '#f2c9a0';
+    ctx.beginPath(); ctx.arc(-2, -1, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    if (car.nosFlame) drawNosFlame(ctx, sx, sy, car.angle, car.len);
+    return;
+  }
   ctx.fillStyle = car.color;
   ctx.beginPath();
   ctx.roundRect(-car.len / 2, -car.wid / 2, car.len, car.wid, 7);
@@ -319,11 +418,33 @@ function drawCarShape(ctx, car, sx, sy, night) {
     ctx.closePath(); ctx.fill();
     ctx.restore();
   }
+  // Api NOS biru di knalpot (v5 baru).
+  if (car.nosFlame) drawNosFlame(ctx, sx, sy, car.angle, car.len);
   // Asap kerusakan.
   if (car.cond < 45) {
     ctx.fillStyle = 'rgba(120,120,125,0.5)';
     ctx.beginPath(); ctx.arc(sx - Math.cos(car.angle) * 10, sy - Math.sin(car.angle) * 10, 6 + Math.random() * 4, 0, Math.PI * 2); ctx.fill();
   }
+  // Ban bocor (spike): ikon peringatan.
+  if (car.spiked) {
+    ctx.fillStyle = '#ff3b30';
+    ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('! BAN BOCOR !', sx, sy - 24);
+  }
+}
+
+// Api NOS biru di belakang kendaraan (v5 baru).
+function drawNosFlame(ctx, sx, sy, angle, len) {
+  const bx = sx - Math.cos(angle) * (len / 2 + 6);
+  const by = sy - Math.sin(angle) * (len / 2 + 6);
+  ctx.fillStyle = 'rgba(80,180,255,0.95)';
+  ctx.beginPath();
+  ctx.arc(bx, by, 7 + Math.random() * 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath();
+  ctx.arc(bx, by, 3, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawCars(ctx, G, night) {
@@ -451,7 +572,24 @@ function drawNightOverlay(ctx, G) {
   ctx.fillRect(0, 0, 1280, 720);
 }
 
-// ============================ HUD (overhaul v4) ============================
+// Hujan (v5 baru): garis diagonal + kilau basah di jalan.
+function drawRain(ctx, G) {
+  const w = G.weather;
+  ctx.strokeStyle = `rgba(180,200,230,${0.25 + w.rain * 0.3})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const d of w.drops) {
+    ctx.moveTo(d.x - G.cam.x, d.y - G.cam.y);
+    ctx.lineTo(d.x - G.cam.x - 6, d.y - G.cam.y + 18);
+  }
+  ctx.stroke();
+  // Genangan: kilau biru tipis di jalan.
+  ctx.fillStyle = `rgba(120,160,220,${w.rain * 0.05})`;
+  ctx.fillRect(0, 0, 1280, 720);
+  // Label hujan di HUD (digambar di drawHUD lewat G.weather).
+}
+
+// ============================ HUD ============================
 
 export function drawHUD(ctx, G) {
   const p = G.player;
@@ -465,7 +603,7 @@ export function drawHUD(ctx, G) {
   ctx.strokeRect(14, 12, 330, 96);
   ctx.fillStyle = '#ff2e88';
   ctx.font = 'bold 13px sans-serif';
-  const mTitle = G.mission ? `MISSION ${G.mission.id}/12 — ${G.mission.title}` : 'FREE ROAM — PORT SOLANO';
+  const mTitle = G.mission ? `MISSION ${G.mission.id}/15 — ${G.mission.title}` : 'FREE ROAM — PORT SOLANO';
   ctx.fillText(mTitle, 24, 32);
   ctx.fillStyle = '#fff';
   ctx.font = '12px sans-serif';
@@ -488,7 +626,7 @@ export function drawHUD(ctx, G) {
   ctx.fillText('PSPD RESPONSE' + (G.wantedLevel > 0 ? ` — ${G.wantedLevel}★` : ' — CLEAR'), 24, 136);
   ctx.font = '11px monospace';
   units.forEach((u, i) => {
-    ctx.fillStyle = u.status === 'SPOTLIGHT' ? '#ffd76a' : '#fff';
+    ctx.fillStyle = u.status === 'SPOTLIGHT' ? '#ffd76a' : u.status === 'SPIKE' ? '#ff8a7a' : '#fff';
     ctx.fillText(`${u.name.padEnd(12, ' ')} ${String(u.meters).padStart(4, ' ')}m  ${u.status}`, 24, 156 + i * 20);
   });
   if (units.length === 0) {
@@ -499,9 +637,9 @@ export function drawHUD(ctx, G) {
   if (G.heli && G.heli.active && G.spotlightOn) {
     ctx.fillStyle = '#ffd76a';
     ctx.font = 'bold 13px sans-serif';
-    ctx.fillText('⚠ SPOTLIGHT ON YOU — AIR-1', 24, 156 + units.length * 20);
+    ctx.fillText('SPOTLIGHT ON YOU — AIR-1', 24, 156 + units.length * 20);
   }
-  // --- Bintang wanted + jam + distrik + radio (tengah atas) ---
+  // --- Bintang wanted + jam + distrik + radio + hujan (tengah atas) ---
   const day = G.day;
   const hh = Math.floor(hour), mm = Math.floor((hour - hh) * 60);
   ctx.fillStyle = 'rgba(10,10,18,0.72)';
@@ -515,7 +653,8 @@ export function drawHUD(ctx, G) {
   ctx.fillStyle = '#fff';
   ctx.font = '12px sans-serif';
   const district = districtAt(p.x, p.y);
-  ctx.fillText(`${district}  •  Day ${day}  •  ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, 640, 54);
+  const rainTag = isRaining(G) ? '  •  HUJAN' : '';
+  ctx.fillText(`${district}  •  Day ${day}  •  ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${rainTag}`, 640, 54);
   ctx.textAlign = 'left';
   // Radio station (tengah atas, bawah jam).
   ctx.fillStyle = 'rgba(10,10,18,0.72)';
@@ -571,7 +710,7 @@ export function drawHUD(ctx, G) {
     ctx.fillStyle = color;
     ctx.fillRect(84, y - 6, 250 * Math.max(0, val) / 100, 9);
   });
-  // --- Speedometer besar kanan bawah ---
+  // --- Speedometer besar kanan bawah (+ NOS gauge v5) ---
   if (p.inCar) {
     const car = p.inCar;
     const kmh = Math.round(Math.abs(car.speed) * 0.31);
@@ -597,6 +736,18 @@ export function drawHUD(ctx, G) {
     ctx.fillRect(1140, 684, 110, 8);
     ctx.fillStyle = car.cond < 45 ? '#ff3b30' : '#3fae5a';
     ctx.fillRect(1140, 684, 110 * car.cond / 100, 8);
+    // NOS gauge (v5 baru) — di atas speedometer.
+    if (p.nosMax > 0) {
+      ctx.fillStyle = 'rgba(10,10,18,0.8)';
+      ctx.fillRect(1030, 572, 236, 22);
+      ctx.fillStyle = '#50b4ff';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText('NOS', 1042, 588);
+      ctx.fillStyle = '#123';
+      ctx.fillRect(1080, 578, 170, 10);
+      ctx.fillStyle = car.nosFlame ? '#bfe8ff' : '#50b4ff';
+      ctx.fillRect(1080, 578, 170 * (p.nos / p.nosMax), 10);
+    }
   } else {
     ctx.fillStyle = 'rgba(10,10,18,0.7)';
     ctx.fillRect(1030, 600, 236, 106);
@@ -609,13 +760,15 @@ export function drawHUD(ctx, G) {
     ctx.fillText('E: naik mobil  •  R: radio', 1042, 672);
   }
   // --- Popup skor (DRIFT / NEAR MISS / MISSION COMPLETE) ---
+  // Revisi v5.2: popup digambar di posisi dunia (dekat pemain), bukan di
+  // tengah layar — supaya dua popup tidak menumpuk dan menutupi dialog.
   ctx.textAlign = 'center';
-  G.popups.forEach((pp, i) => {
-    const a = Math.max(0, 1 - pp.t / 2.2);
+  G.popups.forEach((pp) => {
+    const a = Math.max(0, Math.min(1, 1 - pp.t / 2.2));
     ctx.globalAlpha = a;
     ctx.fillStyle = '#ffd76a';
     ctx.font = 'bold 18px sans-serif';
-    ctx.fillText(pp.text, 640, 300 - i * 28 - pp.t * 22);
+    ctx.fillText(pp.text, pp.x - G.cam.x, pp.y - G.cam.y - pp.t * 22);
     ctx.globalAlpha = 1;
   });
   ctx.textAlign = 'left';
@@ -633,6 +786,22 @@ export function drawHUD(ctx, G) {
   if (G.dialog) drawDialog(ctx, G);
   // --- Toko senjata overlay ---
   if (G.shop.open) drawShop(ctx, G);
+  // --- Garasi overlay (v5 baru) ---
+  if (G.garage.open) drawGarage(ctx, G);
+  // --- Meter deteksi stealth (v5 baru, misi 14) ---
+  if (G.mission && G.mission.id === 14) {
+    ctx.fillStyle = 'rgba(10,10,18,0.8)';
+    ctx.fillRect(480, 100, 320, 30);
+    ctx.fillStyle = '#ffd34d';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('DETEKSI: ' + Math.floor(G.mission.data.detect || 0) + '%', 640, 120);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(490, 126, 300, 6);
+    ctx.fillStyle = (G.mission.data.detect || 0) > 70 ? '#ff3b30' : '#ffd34d';
+    ctx.fillRect(490, 126, 300 * ((G.mission.data.detect || 0) / 100), 6);
+    ctx.textAlign = 'left';
+  }
 }
 
 // Potret karakter digambar canvas: lingkaran wajah + ciri khas.
@@ -756,8 +925,50 @@ function drawShop(ctx, G) {
   ctx.fillText(G.shop.message, 410, 490);
 }
 
+// Overlay garasi Rosa (v5 baru): 4 upgrade + servis.
+function drawGarage(ctx, G) {
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, 1280, 720);
+  ctx.fillStyle = '#14141f';
+  ctx.fillRect(390, 120, 500, 420);
+  ctx.strokeStyle = '#22e6ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(390, 120, 500, 420);
+  ctx.fillStyle = '#22e6ff';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillText("ROSA'S GARAGE", 410, 155);
+  ctx.fillStyle = '#fff';
+  ctx.font = '13px sans-serif';
+  ctx.fillText('Uang: $' + G.player.money.toLocaleString('en-US') + '   (↑↓ pilih, Enter beli, S servis, Esc tutup)', 410, 178);
+  const keys = Object.keys(UPGRADES);
+  keys.forEach((key, i) => {
+    const up = UPGRADES[key];
+    const lvl = G.player.upgrades[key];
+    const y = 205 + i * 62;
+    ctx.fillStyle = G.garage.selected === i ? '#2a2a44' : '#1c1c28';
+    ctx.fillRect(410, y, 460, 52);
+    if (G.garage.selected === i) { ctx.strokeStyle = '#fff'; ctx.strokeRect(410, y, 460, 52); }
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px sans-serif';
+    const lvlText = lvl >= 3 ? 'MAX' : 'Lv' + lvl + ' → Lv' + (lvl + 1);
+    ctx.fillText(up.name + '  [' + lvlText + ']', 422, y + 20);
+    ctx.fillStyle = '#bbb';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(up.desc, 422, y + 40);
+    ctx.fillStyle = lvl >= 3 ? '#8affc1' : '#3fae5a';
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText(lvl >= 3 ? 'MAX' : '$' + up.costs[lvl], 800, y + 28);
+  });
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = '13px sans-serif';
+  ctx.fillText(G.garage.message, 410, 470);
+  ctx.fillStyle = '#bbb';
+  ctx.font = '12px sans-serif';
+  ctx.fillText('NOS: ' + Math.round(G.player.nos) + '/' + G.player.nosMax + '  •  Shift saat mengemudi = NOS boost', 410, 500);
+}
+
 // Minimap: kota mini, blip pemain/mobil/misi/polisi/heli.
-// Revisi: marker misi pink digambar di atas jalan supaya selalu kelihatan.
+// Marker misi pink digambar di atas jalan supaya selalu kelihatan.
 function drawMinimap(ctx, G, x, y, w, h) {
   ctx.fillStyle = 'rgba(8,8,16,0.85)';
   ctx.fillRect(x, y, w, h);
@@ -773,6 +984,12 @@ function drawMinimap(ctx, G, x, y, w, h) {
   // Pantai.
   ctx.fillStyle = '#c2a878';
   ctx.fillRect(px(2165), y, w - (px(2165) - x), h);
+  // Runway airfield.
+  ctx.fillStyle = '#e8e8e8';
+  ctx.fillRect(px(1880), py(1090), 270 * sx, 60 * sy);
+  // Neon Mile.
+  ctx.fillStyle = '#ff2e88';
+  ctx.fillRect(px(575), py(1465), 990 * sx, (WORLD_H - 1465) * sy);
   // Marker misi (pink).
   if (G.missionMarker) {
     ctx.fillStyle = '#ff2e88';
@@ -821,13 +1038,13 @@ export function drawScreen(ctx, G, kind) {
     ctx.fillStyle = '#fff';
     ctx.font = '18px sans-serif';
     ctx.fillText('Deke Marlowe berutang $50.000 pada Madame Kestrel.', 640, 350);
-    ctx.fillText('12 misi. 5 distrik. 1 kota yang tidak pernah tidur.', 640, 380);
+    ctx.fillText('15 misi. 7 distrik. Airfield, Neon Mile, NOS, dan hujan malam.', 640, 380);
     ctx.fillStyle = '#ffd76a';
     ctx.font = 'bold 22px sans-serif';
     ctx.fillText('ENTER — New Game      C — Continue', 640, 460);
     ctx.fillStyle = '#bbb';
     ctx.font = '15px sans-serif';
-    ctx.fillText('WASD jalan / mengemudi • Shift lari • E naik mobil / interaksi • Space handbrake', 640, 510);
+    ctx.fillText('WASD jalan / mengemudi • Shift lari / NOS • E naik mobil / interaksi • Space handbrake', 640, 510);
     ctx.fillText('Mouse aim • Klik tembak • 1-4 ganti senjata • R radio • Esc pause', 640, 536);
     ctx.fillStyle = '#888';
     ctx.font = '12px sans-serif';
@@ -837,8 +1054,8 @@ export function drawScreen(ctx, G, kind) {
     ctx.font = 'bold 54px sans-serif';
     ctx.fillText('PAUSED', 640, 320);
     ctx.font = '18px sans-serif';
-    ctx.fillText('Esc — lanjut main      M — misi berikutnya (debug: tidak)', 640, 370);
-    ctx.fillText(`Misi ${G.missionsDone}/12 selesai  •  $${G.player.money.toLocaleString('en-US')}  •  Day ${G.day}`, 640, 410);
+    ctx.fillText('Esc — lanjut main', 640, 370);
+    ctx.fillText(`Misi ${G.missionsDone}/15 selesai  •  $${G.player.money.toLocaleString('en-US')}  •  Day ${G.day}`, 640, 410);
   } else if (kind === 'busted') {
     ctx.fillStyle = '#4d8dff';
     ctx.font = 'bold 64px sans-serif';
@@ -860,12 +1077,12 @@ export function drawScreen(ctx, G, kind) {
     ctx.shadowColor = '#ffd76a';
     ctx.shadowBlur = 24;
     ctx.font = 'bold 64px sans-serif';
-    ctx.fillText('TIDE TURNS', 640, 300);
+    ctx.fillText('NEON MILE', 640, 300);
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#fff';
     ctx.font = '20px sans-serif';
-    ctx.fillText('Boss Rook tumbang. Pelabuhan milikmu. Utang lunas.', 640, 360);
-    ctx.fillText(`12/12 misi selesai  •  $${G.player.money.toLocaleString('en-US')}  •  Day ${G.day}`, 640, 400);
+    ctx.fillText('Kasino dirampok, Rook tumbang, utang lunas. Port Solano milikmu.', 640, 360);
+    ctx.fillText(`15/15 misi selesai  •  $${G.player.money.toLocaleString('en-US')}  •  Day ${G.day}`, 640, 400);
     ctx.fillStyle = '#ffd76a';
     ctx.font = 'bold 20px sans-serif';
     ctx.fillText('ENTER — free roam Port Solano', 640, 470);

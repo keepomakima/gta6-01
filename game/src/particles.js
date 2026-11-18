@@ -1,6 +1,8 @@
-// NEON TIDE — particles.js
+// NEON TIDE v5 — particles.js
 // Partikel: knalpot, muzzle flash, tabrakan (spark), asap kerusakan, darah,
-// debu rotor wash, plus bekas ban (skid marks) yang memudar pelan.
+// debu rotor wash, api NOS biru (baru v5), plus bekas ban (skid marks) yang
+// memudar pelan. Ditulis fresh untuk v5.
+// Revisi v5.2: nosflame hidup singkat (0.28 dtk) supaya api berkedip hidup.
 export class Particles {
   constructor() {
     this.list = [];
@@ -8,16 +10,16 @@ export class Particles {
   }
 
   burst(x, y, kind, n = 6) {
-    // Revisi: batas 500 partikel aktif supaya frame tidak tersendat di chase.
+    // Batas 500 partikel aktif supaya frame tidak tersendat di chase.
     for (let i = 0; i < n; i += 1) {
       const a = Math.random() * Math.PI * 2;
       const sp = kind === 'exhaust' ? 12 + Math.random() * 18 : 40 + Math.random() * 120;
+      const life = kind === 'smoke' ? 1.4 : kind === 'dust' ? 0.9 : kind === 'nosflame' ? 0.28 : 0.45;
       this.list.push({
         x, y, kind,
         vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        life: kind === 'smoke' ? 1.4 : kind === 'dust' ? 0.9 : 0.45,
-        maxLife: kind === 'smoke' ? 1.4 : kind === 'dust' ? 0.9 : 0.45,
-        size: kind === 'smoke' ? 7 + Math.random() * 8 : 2 + Math.random() * 3,
+        life, maxLife: life,
+        size: kind === 'smoke' ? 7 + Math.random() * 8 : kind === 'nosflame' ? 4 + Math.random() * 4 : 2 + Math.random() * 3,
       });
     }
     if (this.list.length > 500) this.list.splice(0, this.list.length - 500);
@@ -61,6 +63,7 @@ export class Particles {
       else if (pt.kind === 'smoke') { ctx.fillStyle = `rgba(90,90,95,${a * 0.6})`; }
       else if (pt.kind === 'exhaust') { ctx.fillStyle = `rgba(180,180,190,${a * 0.5})`; }
       else if (pt.kind === 'blood') { ctx.fillStyle = `rgba(200,30,40,${a})`; }
+      else if (pt.kind === 'nosflame') { ctx.fillStyle = `rgba(80,180,255,${a})`; }
       else { ctx.fillStyle = `rgba(210,190,150,${a * 0.5})`; } // dust
       ctx.beginPath();
       ctx.arc(sx, sy, pt.size * (pt.kind === 'smoke' ? (1.6 - a * 0.6) : 1), 0, Math.PI * 2);

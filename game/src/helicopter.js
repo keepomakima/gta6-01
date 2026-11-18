@@ -1,7 +1,11 @@
-// NEON TIDE — helicopter.js
-// Helikopter polisi AIR-1 (baru di v4): muncul di wanted 4-5, mengunci pemain
-// dengan spotlight cone, rotor wash (partikel + goyangan kamera), dan
-// memperlambat penurunan wanted selama sorotan menempel.
+// NEON TIDE v5 — helicopter.js
+// Helikopter polisi AIR-1: muncul di wanted 4-5, mengunci pemain dengan
+// spotlight cone, rotor wash (partikel + goyangan kamera), dan memperlambat
+// penurunan wanted selama sorotan menempel. Di hujan, spotlight lebih lebar
+// dan lebih dramatis. Ditulis fresh untuk v5.
+// Revisi v5.2: angleDiff dari random.js menggantikan loop while manual.
+import { angleDiff } from './random.js';
+
 export function makeHeli() {
   return {
     x: 0, y: 0, angle: 0, active: false, rotorT: 0,
@@ -10,7 +14,6 @@ export function makeHeli() {
 }
 
 // Update helikopter: terbang di atas pemain, spotlight mengunci bila dekat.
-// Revisi: lockT meluruh pelan supaya indikator SPOTLIGHT tidak berkedip.
 export function updateHeli(G, dt) {
   const heli = G.heli;
   const p = G.player;
@@ -31,9 +34,7 @@ export function updateHeli(G, dt) {
   // Terbang mendekat lalu hover melingkar di atas pemain.
   const d = Math.hypot(p.x - heli.x, p.y - heli.y);
   const want = Math.atan2(p.y - heli.y, p.x - heli.x);
-  let da = want - heli.angle;
-  while (da > Math.PI) da -= Math.PI * 2;
-  while (da < -Math.PI) da += Math.PI * 2;
+  const da = angleDiff(heli.angle, want);
   heli.angle += da * Math.min(1, dt * 2);
   if (d > heli.hoverR) {
     heli.x += Math.cos(want) * heli.speed * dt;
@@ -44,7 +45,7 @@ export function updateHeli(G, dt) {
     heli.x = p.x + Math.cos(orbit) * heli.hoverR;
     heli.y = p.y + Math.sin(orbit) * heli.hoverR;
   }
-  // Spotlight mengunci bila heli dalam 320px: wanted tidak turun.
+  // Spotlight mengunci bila heli dalam 340px: wanted tidak turun.
   if (d < 340) {
     heli.lockT += dt;
     G.lastSeenT = 0;

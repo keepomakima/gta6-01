@@ -1,8 +1,13 @@
-// NEON TIDE — traffic.js
+// NEON TIDE v5 — traffic.js
 // Lalu lintas Port Solano: mobil AI mengikuti jalan (lajur kanan, belok di
 // persimpangan, berhenti bila ada mobil di depan), pejalan kaki di trotoar
 // yang lari ketakutan saat ada tembakan atau tabrakan di dekatnya. Klakson
-// saat pemain menghalangi jalan.
+// saat pemain menghalangi jalan. Motor parkir baru di garasi + airfield.
+// Ditulis fresh untuk v5.
+// Revisi v5.2: motor parkir di garasi Rosa (1470,780) + apron airfield (2015,1180).
+// Revisi v5.3: motor garasi pindah ke (1520,820) — 100px dari titik interaksi
+// garasi (1420,820) — supaya E di garasi membuka menu garasi, bukan malah
+// naik motor (aturan nearCar <70px).
 import { ROADS_V, ROADS_H, WORLD_W, WORLD_H, CAR_TYPES } from './config.js';
 import { clamp, dist, pick } from './random.js';
 import { makeCar, makePed, clampToWorld } from './entities.js';
@@ -48,8 +53,8 @@ export function spawnPeds(G, n = 22) {
 }
 
 // Mobil AI: jalan lurus di lajurnya, belok acak di persimpangan, rem bila
-// ada kendaraan di depan, klakson bila pemain menghalangi. Revisi: belok
-// hanya di persimpangan (onCross) supaya tidak keluar jalur di tengah jalan.
+// ada kendaraan di depan, klakson bila pemain menghalangi. Belok hanya di
+// persimpangan supaya tidak keluar jalur di tengah jalan.
 export function updateTraffic(G, dt) {
   const p = G.player;
   for (const car of G.cars) {
@@ -126,12 +131,14 @@ export function updatePeds(G, dt) {
 }
 
 // Mobil parkir di pinggir jalan (bisa dicuri): lajur luar, bukan trotoar.
+// Baru v5: motor Tide Runner parkir di garasi Rosa + apron airfield.
 export function spawnParkedCars(G) {
   const spots = [
     ['sedan', 668, 220], ['taxi', 620, 868], ['sport', 668, 420],
     ['sedan', 968, 620], ['truck', 1520, 868], ['sedan', 1820, 668],
     ['sport', 2120, 868], ['taxi', 920, 1068], ['sedan', 1220, 1468],
     ['sport', 620, 1068], ['sedan', 1820, 220], ['truck', 320, 1220],
+    ['bike', 1520, 820], ['bike', 2015, 1180], ['bike', 2220, 1420],
   ];
   for (const [type, x, y] of spots) {
     const vertical = x % 2 === 0;

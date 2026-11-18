@@ -1,7 +1,8 @@
-// NEON TIDE — input.js
-// Keyboard + mouse untuk desktop: WASD/arrows jalan & mengemudi, Shift lari,
-// Space handbrake, E interaksi, R ganti radio, 1-4 ganti senjata, Esc pause,
-// klik kiri menembak (tahan untuk auto). Mouse aim dihitung dari posisi kamera.
+// NEON TIDE v5 — input.js
+// Keyboard + mouse untuk desktop: WASD/arrows jalan & mengemudi, Shift lari
+// (jalan kaki) / NOS boost (mengemudi), Space handbrake, E interaksi, R ganti
+// radio, 1-4 ganti senjata, Esc pause, klik kiri menembak (tahan = auto).
+// Ditulis fresh untuk v5. Revisi v5.2: pressed dibersihkan tiap endFrame.
 export class Input {
   constructor(canvas) {
     this.keys = new Set();
@@ -14,7 +15,6 @@ export class Input {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
       if (!e.repeat) this.pressed.add(e.code);
       this.keys.add(e.code);
-      // Gestur keyboard juga membangunkan AudioContext (autoplay policy).
       if (window.__game && window.__game.audio) window.__game.audio.ensure();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -32,6 +32,17 @@ export class Input {
   down(code) { return this.keys.has(code); }
   hit(code) { return this.pressed.has(code); }
   endFrame() { this.pressed.clear(); }
+
+  // Pintasan arah + Shift/Space (dipakai driveCar: nos = Shift, handbrake = Space).
+  // Revisi v5.3: getter ini sempat hilang dari input.js — NOS dan handbrake
+  // tidak pernah aktif sampai ditambahkan kembali.
+  get up() { return this.down('KeyW') || this.down('ArrowUp'); }
+  get dn() { return this.down('KeyS') || this.down('ArrowDown'); }
+  get lf() { return this.down('KeyA') || this.down('ArrowLeft'); }
+  get rt() { return this.down('KeyD') || this.down('ArrowRight'); }
+  get run() { return this.down('ShiftLeft') || this.down('ShiftRight'); }
+  get nos() { return this.down('ShiftLeft') || this.down('ShiftRight'); }
+  get handbrake() { return this.down('Space'); }
 
   // Arah gerak dari WASD/arrows, ternormalisasi. {x, y} atau null bila diam.
   moveDir() {

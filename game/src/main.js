@@ -1,9 +1,12 @@
-// NEON TIDE — main.js
+// NEON TIDE v5 — main.js
 // Titik masuk game: state global G, game loop (dt dari performance.now —
 // pelajaran bug v2: jangan pakai timestamp rAF sebagai last), state machine
-// title/play/pause/busted/wasted/complete, save/load localStorage, dan
-// window.__debug + window.__game untuk playtest otomatis.
-import { WORLD_W, WORLD_H, SAVE_KEY, PLACES, WEAPONS, CAR_TYPES } from './config.js';
+// title/play/pause/busted/wasted/complete, save/load localStorage (termasuk
+// upgrade garasi + NOS), dan window.__debug + window.__game untuk playtest
+// otomatis. Baru v5: cuaca hujan, garasi Rosa, motor, spike strip.
+// Ditulis fresh untuk v5.
+// Revisi v5.2: save/load kini menyimpan upgrades + nos/nosMax pemain.
+import { WORLD_W, WORLD_H, SAVE_KEY, PLACES, WEAPONS, CAR_TYPES, SHOP_ITEMS, UPGRADES } from './config.js';
 import { mulberry32, clamp, dist } from './random.js';
 import { Input } from './input.js';
 import { buildWorld, districtAt } from './world.js';
@@ -14,6 +17,8 @@ import { makeHeli, updateHeli } from './helicopter.js';
 import { startMission, updateMission, missionTarget, completeMission } from './missions.js';
 import { makeCombat, playerShoot, playerPunch, updateBullets, updateEnemies, updatePickups } from './combat.js';
 import { makeShop, tryOpenShop, buySelected, tryUseSafehouse, nearbyInteractable } from './shops.js';
+import { makeGarage, tryOpenGarage, buyUpgrade, serviceCar, garagePrompt } from './garage.js';
+import { makeWeather, updateWeather, setRain } from './weather.js';
 import { GameAudio } from './audio.js';
 import { Particles } from './particles.js';
 import { drawWorld, drawHUD, drawScreen, isNight } from './render.js';
@@ -32,12 +37,14 @@ function newGameState(seed = 20261118) {
     cars: [], peds: [], police: [], enemies: [], pickups: [],
     cam: { x: 0, y: 0 },
     wantedLevel: 0, wantedReason: '', wantedT: 0, lastSeenT: 0, spawnT: 0,
-    roadblock: null, heli: makeHeli(), spotlightOn: false,
+    roadblock: null, spike: null, spikeT: 0, heli: makeHeli(), spotlightOn: false,
     mission: null, missionMarker: null, missionsDone: 0,
     dialog: null, dialogT: 0, popups: [],
-    combat: makeCombat(), shop: makeShop(), particles: new Particles(),
+    combat: makeCombat(), shop: makeShop(), garage: makeGarage(),
+    weather: makeWeather(), particles: new Particles(),
     audio: new GameAudio(), input: new Input(canvas),
     shake: 0, debtPaid: 0, shotMode: null, shotFrames: 0, shotDrive: false,
+    interactPrompt: null,
   };
   G.raiseWanted = (n, reason) => raiseWanted(G, n, reason);
   G.saveGame = () => saveGame(G);
@@ -60,8 +67,9 @@ function newGameState(seed = 20261118) {
 
 const G = newGameState();
 window.__game = G;
-// shopOpen sebagai getter supaya playtest bisa membaca window.__game.shopOpen.
+// shopOpen / garageOpen sebagai getter supaya playtest bisa membacanya.
 Object.defineProperty(G, 'shopOpen', { get() { return G.shop.open; } });
+Object.defineProperty(G, 'garageOpen', { get() { return G.garage.open; } });
 
 // ---------- Save / load ----------
 function saveGame(G) {
@@ -72,6 +80,7 @@ function saveGame(G) {
       x: p.x, y: p.y, hp: p.hp, armor: p.armor,
       owned: p.owned, ammo: p.ammo, weapon: p.weapon,
       day: G.day, clockHour: G.clockHour, debtPaid: G.debtPaid,
+      upgrades: p.upgrades, nos: p.nos, nosMax: p.nosMax,
     }));
   } catch { /* storage penuh / diblokir: abaikan */ }
 }
@@ -87,6 +96,8 @@ function loadGame(G) {
     p.weapon = s.weapon || 'pistol';
     G.missionsDone = s.missionsDone; G.day = s.day || 1;
     G.clockHour = s.clockHour ?? 13.0; G.debtPaid = s.debtPaid || 0;
+    if (s.upgrades) p.upgrades = s.upgrades;
+    p.nos = s.nos || 0; p.nosMax = s.nosMax || 0;
     return true;
   } catch { return false; }
 }
@@ -102,13 +113,21 @@ window.__debug = {
       hp: Math.round(p.hp), armor: Math.round(p.armor), money: p.money,
       owned: { ...p.owned }, weapon: p.weapon,
       district: districtAt(p.x, p.y), hour: G.clockHour,
+      // Baru v5: status NOS / upgrade / cuaca / spike.
+      nos: Math.round(p.nos), nosMax: p.nosMax, upgrades: { ...p.upgrades },
+      rain: Math.round(G.weather.rain * 100) / 100, spike: !!G.spike,
+      carType: p.inCar ? p.inCar.type : null,
     };
   },
   teleport(x, y) {
     const p = G.player;
     p.x = clamp(x, 16, WORLD_W - 16);
     p.y = clamp(y, 16, WORLD_H - 16);
-    if (p.inCar) { p.inCar.x = p.x; p.inCar.y = p.y; }
+    // Revisi v5.3 (bug playtest): reset kecepatan mobil saat teleport.
+    // Kalau tidak, mobil yang sedang ngebut (mis. setelah drive test 2 detik)
+    // terus melaju dari titik teleport, menabrak gedung, dan memantul menjauh
+    // dari mobil pemberian — E-swap M2/M8 jadi gagal karena jarak > 60px.
+    if (p.inCar) { p.inCar.x = p.x; p.inCar.y = p.y; p.inCar.speed = 0; }
     G.cam.x = clamp(p.x - 640, 0, WORLD_W - 1280);
     G.cam.y = clamp(p.y - 360, 0, WORLD_H - 720);
   },
@@ -121,6 +140,7 @@ window.__debug = {
   },
   setMission(n) { startMission(G, n); },
   setWanted(n) { setWanted(G, n); },
+  setRain(v) { setRain(G, v); G.weather.rain = v; },
   giveMoney(n) { G.player.money += n; },
   spawnCop() {
     const p = G.player;
@@ -138,11 +158,13 @@ window.__debug = {
 // ---------- Interaksi E ----------
 function handleInteract() {
   const p = G.player;
-  if (G.shop.open) return;
+  if (G.shop.open || G.garage.open) return;
   if (p.inCar) {
-    // Ganti mobil bila ada mobil parkir / pemberian di dekatnya; kalau
-    // tidak ada, turun dari mobil. (Dipakai misi taksi: sport -> taksi.)
-    const other = G.cars.find((c) => c !== p.inCar && (c.parked || c.given) && dist(c.x, c.y, p.x, p.y) < 95);
+    // Ganti mobil bila ada mobil parkir / pemberian SANGAT dekat (<60px);
+    // kalau tidak ada, turun dari mobil. Revisi v5.3: radius tukar 95 -> 60
+    // supaya E tidak malah pindah ke mobil parkir 66px jauhnya saat pemain
+    // sebenarnya mau turun (bug playtest v5: sport -> sport bolak-balik).
+    const other = G.cars.find((c) => c !== p.inCar && (c.parked || c.given) && dist(c.x, c.y, p.x, p.y) < 60);
     if (other) {
       p.inCar = null;
       if (other.type === 'cruiser') G.raiseWanted(1, 'mencuri cruiser polisi');
@@ -152,8 +174,23 @@ function handleInteract() {
     exitCar(G);
     return;
   }
+  // Revisi v5.3 (bug playtest): mobil SANGAT dekat (<70px) didahulukan
+  // sebelum toko/garasi — kalau tidak, pemain yang berdiri di garasi Rosa
+  // (1420,820) tidak pernah bisa naik mobil di sebelahnya karena E selalu
+  // membuka menu garasi. Mobil yang dicuri polisi tetap menaikkan wanted.
+  const nearCar = nearestCar(G.cars, p.x, p.y, 70);
+  if (nearCar) {
+    if (nearCar.type === 'cruiser') G.raiseWanted(1, 'mencuri cruiser polisi');
+    enterCar(G, nearCar);
+    if (!nearCar.driver && G.police.some((c) => dist(c.x, c.y, p.x, p.y) < 380)) G.raiseWanted(1, 'curi mobil dilihat polisi');
+    return;
+  }
   if (tryOpenShop(G)) return;
+  if (tryOpenGarage(G)) return;
   if (tryUseSafehouse(G)) return;
+  // Mobil agak jauh (70-95px): tetap bisa dinaiki, tapi toko/garasi/
+  // safehouse didahulukan bila ada. Mobil SANGAT dekat (<70px) sudah
+  // ditangani di atas sebelum toko — lihat revisi v5.3.
   const car = nearestCar(G.cars, p.x, p.y, 95);
   if (car) {
     // Curi mobil polisi juga menaikkan wanted bila ada yang melihat.
@@ -186,6 +223,7 @@ function update(dt) {
   for (const pp of G.popups) pp.t += dt;
   G.popups = G.popups.filter((pp) => pp.t < 2.4);
   G.shake = Math.max(0, G.shake - dt * 14);
+  updateWeather(G, dt);
 
   // Radio + senjata + pause (tombol sekali tekan).
   if (inp.hit('KeyR')) {
@@ -202,6 +240,16 @@ function update(dt) {
     if (inp.hit('ArrowDown')) G.shop.selected = (G.shop.selected + 1) % SHOP_ITEMS.length;
     if (inp.hit('Enter')) buySelected(G);
     if (inp.hit('Escape')) { G.shop.open = false; }
+    inp.endFrame();
+    return;
+  }
+  if (G.garage.open) {
+    const keys = Object.keys(UPGRADES);
+    if (inp.hit('ArrowUp')) G.garage.selected = (G.garage.selected + keys.length - 1) % keys.length;
+    if (inp.hit('ArrowDown')) G.garage.selected = (G.garage.selected + 1) % keys.length;
+    if (inp.hit('Enter')) buyUpgrade(G);
+    if (inp.hit('KeyS')) serviceCar(G);
+    if (inp.hit('Escape')) { G.garage.open = false; }
     inp.endFrame();
     return;
   }
@@ -239,8 +287,9 @@ function update(dt) {
     else if (inp.mouseDown && p.weapon === 'fists') playerPunch(G);
   }
 
-  // Prompt interaksi.
-  G.interactPrompt = p.inCar ? null : nearbyInteractable(G) || (nearestCar(G.cars, p.x, p.y, 95) ? 'Tekan E — naik mobil' : null);
+  // Prompt interaksi — urutan sama seperti handleInteract (revisi v5.3):
+  // mobil sangat dekat dulu, baru toko/garasi/safehouse.
+  G.interactPrompt = p.inCar ? null : (nearestCar(G.cars, p.x, p.y, 70) ? 'Tekan E — naik mobil' : nearbyInteractable(G) || garagePrompt(G) || (nearestCar(G.cars, p.x, p.y, 95) ? 'Tekan E — naik mobil' : null));
 
   updateTraffic(G, dt);
   updatePeds(G, dt);
@@ -304,7 +353,7 @@ function loop(now) {
       G.audio.ensure();
       startMission(G, 1);
     } else if (G.input.hit('KeyC') && localStorage.getItem(SAVE_KEY)) {
-      if (loadGame(G)) { G.mode = 'play'; startMission(G, Math.min(12, G.missionsDone + 1)); }
+      if (loadGame(G)) { G.mode = 'play'; startMission(G, Math.min(15, G.missionsDone + 1)); }
     }
     G.input.endFrame();
     G.time += dt;
@@ -332,7 +381,7 @@ function loop(now) {
   render();
 }
 
-// ---------- Shot mode (?shot=chase|drive|mission|heist&seed=...) ----------
+// ---------- Shot mode (?shot=rainchase|casino|airport|stealth&seed=...) ----------
 const params = new URLSearchParams(location.search);
 const shotScene = params.get('shot');
 if (shotScene) {
