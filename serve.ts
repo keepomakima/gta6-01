@@ -1,7 +1,10 @@
-// NEON TIDE v6 — a tiny static server for game/ (Node 22, standard library
-// only). `node serve.ts` serves game/ on http://localhost:8080 (or
-// --port <n>). It sends the MIME types a browser game needs, refuses any
-// path outside game/, and does nothing clever: a development convenience,
+// NEON TIDE v6-rebuild-2 — serve.ts
+// A tiny static server for game/ (Node 22, standard library only), so the
+// entry can be played locally without a build step:
+//   node serve.ts            (serves game/ on http://localhost:8080)
+//   node serve.ts --port 8090
+// It sends the MIME types a browser game needs, refuses any path outside
+// game/, and otherwise does nothing clever: a development convenience,
 // not a web server for the internet.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -26,6 +29,15 @@ const MIME = {
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
+  '.bin': 'application/octet-stream',
+  '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
   '.txt': 'text/plain; charset=utf-8',
 };
 
@@ -62,3 +74,6 @@ createServer((request, response) => {
 }).listen(port, '127.0.0.1', () => {
   console.log(`game/ is on http://localhost:${port}`);
 });
+// serve.ts serves only game/ — the dossier screenshots live in screenshots/
+// at the repo root and are taken by the playtest scripts in
+// ~/workspace/makefun/gta6-01-work/ (gta6shots-v6r2.mjs), never by hand.

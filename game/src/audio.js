@@ -1,119 +1,107 @@
-// NEON TIDE v6 — procedural WebAudio: three radio stations (all original
-// loops, no samples) plus SFX (engine hum, siren, gunshot, pickup, mission
-// fanfare). Audio starts only after a user gesture; the playtest runs muted.
-export class AudioSys {
-  constructor() {
-    this.ctx = null;
-    this.station = 0; // 0 Neon FM, 1 Harbor Blues, 2 Solano Talk
-    this.stations = ['Neon FM', 'Harbor Blues', 'Solano Talk'];
-    this.radioOn = true;
-    this._radioTimer = null;
-    this._engineOsc = null;
-    this._engineGain = null;
-    this._sirenOsc = null;
-    this.muted = false;
-  }
+// NEON TIDE v6-rebuild-2 — audio.js
+// Procedural WebAudio: three original radio stations (no licensed music)
+// plus SFX. Everything is synthesized; nothing is fetched. Safe to call
+// before any user gesture — the context is created lazily and resumes on
+// the first keypress.
+const STATIONS = [
+  { name: 'Tide FM', scale: [0, 3, 5, 7, 10], bpm: 96, wave: 'triangle' },
+  { name: 'Neon Nights', scale: [0, 2, 3, 7, 8], bpm: 122, wave: 'sawtooth' },
+  { name: 'Harbor Rock', scale: [0, 5, 7, 10, 12], bpm: 132, wave: 'square' },
+];
 
-  ensure() {
-    if (this.ctx) return;
-    try {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-      this._startRadio();
-      this._startEngine();
-    } catch { this.ctx = null; }
-  }
+export function createAudio() {
+  return {
+    ctx: null, station: 0, radioOn: true, nextNoteAt: 0, noteStep: 0,
+    sirenOsc: null, engineOsc: null, engineGain: null,
+  };
+}
 
-  _note(freq, t, dur, type = 'square', vol = 0.05) {
-    if (!this.ctx || this.muted) return;
-    const o = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    o.type = type; o.frequency.value = freq;
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(this.ctx.destination);
-    o.start(t); o.stop(t + dur);
-  }
+function ensureCtx(A) {
+  if (A.ctx) return A.ctx;
+  try {
+    A.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch { A.ctx = null; }
+  return A.ctx;
+}
 
-  _startRadio() {
-    // Simple step sequencer: 8th notes at 112 BPM, per-station scales.
-    const scales = [
-      [220, 261.6, 329.6, 392, 440, 523.3], // Neon FM: A minor arpeggio
-      [196, 233.1, 261.6, 293.7, 349.2, 392], // Harbor Blues
-      [330, 330, 0, 392, 0, 330], // Solano Talk: sparse blips
-    ];
-    let step = 0;
-    const tick = () => {
-      if (!this.ctx) return;
-      if (this.radioOn && !this.muted) {
-        const scale = scales[this.station];
-        const n = scale[step % scale.length];
-        if (n) this._note(n, this.ctx.currentTime, 0.22, this.station === 1 ? 'triangle' : 'square', 0.035);
-        if (step % 4 === 0) this._note(55, this.ctx.currentTime, 0.3, 'sine', 0.06);
-      }
-      step++;
-    };
-    this._radioTimer = setInterval(tick, 268);
-  }
+export function resumeAudio(A) {
+  const ctx = ensureCtx(A);
+  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+}
 
-  _startEngine() {
-    if (!this.ctx) return;
-    this._engineOsc = this.ctx.createOscillator();
-    this._engineGain = this.ctx.createGain();
-    this._engineOsc.type = 'sawtooth';
-    this._engineOsc.frequency.value = 50;
-    this._engineGain.gain.value = 0;
-    this._engineOsc.connect(this._engineGain).connect(this.ctx.destination);
-    this._engineOsc.start();
-  }
+export function stationName(A) { return STATIONS[A.station].name; }
 
-  setEngine(rpm01) {
-    if (!this._engineOsc || this.muted) return;
-    this._engineOsc.frequency.value = 45 + rpm01 * 160;
-    this._engineGain.gain.value = rpm01 * 0.03;
-  }
+export function nextStation(A) {
+  A.station = (A.station + 1) % STATIONS.length;
+  A.noteStep = 0;
+}
 
-  siren(on) {
-    if (!this.ctx) return;
-    if (on && !this._sirenOsc) {
-      this._sirenOsc = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      g.gain.value = 0.02;
-      this._sirenOsc.type = 'sine';
-      this._sirenOsc.frequency.value = 700;
-      this._sirenOsc.connect(g).connect(this.ctx.destination);
-      this._sirenOsc.start();
-      this._sirenLfo = setInterval(() => {
-        if (this._sirenOsc) this._sirenOsc.frequency.value = this._sirenOsc.frequency.value > 800 ? 650 : 950;
-      }, 400);
-    } else if (!on && this._sirenOsc) {
-      clearInterval(this._sirenLfo);
-      this._sirenOsc.stop(); this._sirenOsc = null;
-    }
-  }
+// One radio tick: schedule the next note of the current station's loop.
+export function radioTick(S, dt) {
+  const A = S.audio;
+  if (!A.radioOn || S.ui.screen !== 'playing') return;
+  const ctx = ensureCtx(A);
+  if (!ctx || ctx.state !== 'running') return;
+  const st = STATIONS[A.station];
+  const stepDur = 60 / st.bpm / 2;
+  A.nextNoteAt -= dt;
+  if (A.nextNoteAt > 0) return;
+  A.nextNoteAt = stepDur;
+  const degree = st.scale[A.noteStep % st.scale.length];
+  const octave = 3 + Math.floor(A.noteStep / st.scale.length) % 2;
+  const freq = 220 * Math.pow(2, (degree + (octave - 3) * 12) / 12);
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = st.wave;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.05, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + stepDur * 0.95);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + stepDur);
+  A.noteStep += 1;
+}
 
-  gunshot() {
-    if (!this.ctx || this.muted) return;
-    const dur = 0.12;
-    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * dur, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    const g = this.ctx.createGain(); g.gain.value = 0.25;
-    src.connect(g).connect(this.ctx.destination);
-    src.start();
-  }
+function blip(A, freq, dur, type = 'sine', vol = 0.12) {
+  const ctx = ensureCtx(A);
+  if (!ctx || ctx.state !== 'running') return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  gain.gain.setValueAtTime(vol, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + dur);
+}
 
-  blip(freq = 880) { if (this.ctx && !this.muted) this._note(freq, this.ctx.currentTime, 0.12, 'sine', 0.08); }
+export function sfxShot(A) { blip(A, 900, 0.09, 'square', 0.1); }
+export function sfxPickup(A) { blip(A, 660, 0.12, 'sine', 0.12); blip(A, 990, 0.14, 'sine', 0.1); }
+export function sfxCrash(A) { blip(A, 120, 0.25, 'sawtooth', 0.14); }
+export function sfxMission(A) {
+  blip(A, 523, 0.15, 'sine', 0.12);
+  setTimeout(() => blip(A, 784, 0.2, 'sine', 0.12), 140);
+}
 
-  fanfare() {
-    if (!this.ctx || this.muted) return;
-    const t0 = this.ctx.currentTime;
-    [523.3, 659.3, 784, 1046.5].forEach((f, i) => this._note(f, t0 + i * 0.12, 0.3, 'triangle', 0.09));
+// Siren: a slow two-tone loop while wanted >= 2. Kept quiet by default in
+// headless playtest (no gesture => no context => no-op).
+export function sirenTick(S, dt) {
+  const A = S.audio;
+  const ctx = ensureCtx(A);
+  if (!ctx || ctx.state !== 'running') return;
+  if (S.wanted < 2) {
+    if (A.sirenOsc) { try { A.sirenOsc.stop(); } catch {} A.sirenOsc = null; }
+    return;
   }
-
-  nextStation() {
-    this.station = (this.station + 1) % 3;
-    return this.stations[this.station];
+  if (!A.sirenOsc) {
+    A.sirenOsc = ctx.createOscillator();
+    const g = ctx.createGain();
+    g.gain.value = 0.02;
+    A.sirenOsc.type = 'sine';
+    A.sirenOsc.connect(g).connect(ctx.destination);
+    A.sirenOsc.start();
+    A.sirenPhase = 0;
   }
+  A.sirenPhase = (A.sirenPhase + dt) % 1;
+  A.sirenOsc.frequency.value = A.sirenPhase < 0.5 ? 700 : 950;
 }

@@ -1,42 +1,59 @@
-// NEON TIDE v6 — keyboard + mouse input. Keys are tracked by code; the
-// playtest drives the same state through inject()/release()/pressed so the
-// game never needs real hardware to prove a system works.
+// NEON TIDE v6-rebuild-2 — input.js
+// Keyboard + mouse input with edge-triggered action keys (E / F / Space).
+// Playtest/debug code can inject keys through `press()` / `release()`.
 export class Input {
   constructor() {
     this.keys = new Set();
-    this.pressed = new Set(); // edge-triggered, consumed each frame by main
-    this.mouseX = 0;
-    this.mouseY = 0;
-    this.mouseDown = false;
-    this.mouseClicked = false;
+    this.pressed = new Set();
+    this.mouse = { x: 0, y: 0, down: false, clicked: false };
     this._onKeyDown = (e) => {
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-      if (!e.repeat) this.pressed.add(e.code);
+      if (e.repeat) return;
       this.keys.add(e.code);
+      this.pressed.add(e.code);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
     };
     this._onKeyUp = (e) => this.keys.delete(e.code);
-    this._onMouseMove = (e) => { this.mouseX = e.clientX; this.mouseY = e.clientY; };
-    this._onMouseDown = (e) => { if (e.button === 0) { this.mouseDown = true; this.mouseClicked = true; } };
-    this._onMouseUp = (e) => { if (e.button === 0) this.mouseDown = false; };
+    this._onMouseMove = (e) => { this.mouse.x = e.clientX; this.mouse.y = e.clientY; };
+    this._onMouseDown = (e) => { this.mouse.down = true; this.mouse.clicked = true; };
+    this._onMouseUp = () => { this.mouse.down = false; };
   }
-  attach() {
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('mousemove', this._onMouseMove);
-    window.addEventListener('mousedown', this._onMouseDown);
-    window.addEventListener('mouseup', this._onMouseUp);
+  attach(target) {
+    target.addEventListener('keydown', this._onKeyDown);
+    target.addEventListener('keyup', this._onKeyUp);
+    target.addEventListener('mousemove', this._onMouseMove);
+    target.addEventListener('mousedown', this._onMouseDown);
+    target.addEventListener('mouseup', this._onMouseUp);
   }
-  // Movement axes: W/Up forward, S/Down back, A/Left, D/Right.
-  get up() { return this.keys.has('KeyW') || this.keys.has('ArrowUp'); }
-  get dn() { return this.keys.has('KeyS') || this.keys.has('ArrowDown'); }
-  get lf() { return this.keys.has('KeyA') || this.keys.has('ArrowLeft'); }
-  get rt() { return this.keys.has('KeyD') || this.keys.has('ArrowRight'); }
-  get run() { return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); }
-  get nos() { return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'); }
-  get handbrake() { return this.keys.has('Space'); }
+  detach(target) {
+    target.removeEventListener('keydown', this._onKeyDown);
+    target.removeEventListener('keyup', this._onKeyUp);
+    target.removeEventListener('mousemove', this._onMouseMove);
+    target.removeEventListener('mousedown', this._onMouseDown);
+    target.removeEventListener('mouseup', this._onMouseUp);
+  }
+  down(code) { return this.keys.has(code); }
   wasPressed(code) { return this.pressed.has(code); }
-  endFrame() { this.pressed.clear(); this.mouseClicked = false; }
-  // Test hooks: inject('w') holds a key, release() lets go.
-  inject(codes) { for (const c of codes) this.keys.add(c === 'w' ? 'KeyW' : c === 'a' ? 'KeyA' : c === 's' ? 'KeyS' : c === 'd' ? 'KeyD' : c === 'shift' ? 'ShiftLeft' : c === 'space' ? 'Space' : c); }
-  release(codes) { for (const c of codes) this.keys.delete(c === 'w' ? 'KeyW' : c === 'a' ? 'KeyA' : c === 's' ? 'KeyS' : c === 'd' ? 'KeyD' : c === 'shift' ? 'ShiftLeft' : c === 'space' ? 'Space' : c); }
+  // Call once per frame after the game consumed input.
+  endFrame() { this.pressed.clear(); this.mouse.clicked = false; }
+  press(code) { this.keys.add(code); this.pressed.add(code); }
+  release(code) { this.keys.delete(code); }
+
+  get up() { return this.down('KeyW') || this.down('ArrowUp'); }
+  get dn() { return this.down('KeyS') || this.down('ArrowDown'); }
+  get lf() { return this.down('KeyA') || this.down('ArrowLeft'); }
+  get rt() { return this.down('KeyD') || this.down('ArrowRight'); }
+  get run() { return this.down('ShiftLeft') || this.down('ShiftRight'); }
+  get nos() { return this.run; }
+  get handbrake() { return this.down('Space'); }
+  get interact() { return this.wasPressed('KeyE'); }
+  get shoot() { return this.mouse.down || this.mouse.clicked; }
+  get pause() { return this.wasPressed('Escape'); }
+  get radioNext() { return this.wasPressed('KeyR'); }
+}
+
+// Debug helper: simulate a full key tap (down + up) in one frame, used by the
+// headless playtest to open menus and confirm dialogs without a real keyboard.
+export function tapKey(input, code) {
+  input.press(code);
+  setTimeout(() => input.release(code), 50);
 }
