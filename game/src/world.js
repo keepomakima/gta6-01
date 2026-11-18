@@ -1,128 +1,270 @@
-// NEON TIDE v5 — Port Solano: roads, buildings, landmarks and districts.
-// The city is a road grid; every mission point sits on a road or an open
-// plaza, never inside a building. Buildings are solid rectangles.
-import { WORLD_W, WORLD_H } from './config.js';
+// NEON TIDE v6 — the 3D city of Port Solano (three.js). Builds the whole
+// scene from the seeded RNG: ground, road grid, district buildings with
+// collision boxes, landmarks (harbor containers, casino neon, airfield
+// runway + parked plane, pier, marina boats, beach), street lamps, rain
+// points and the day/night lighting rig. Physics stays 2D on the XZ plane.
+import { DISTRICTS, SEED, WORLD, ROAD_WIDTH, ROADS_X, ROADS_Z } from './config.js';
+import { makeRng, clamp, lerp } from './rng.js';
 
-export const ROAD_Y = [200, 500, 800, 1100, 1400];
-export const ROAD_X = [300, 600, 900, 1200, 1500, 1800, 2100];
-export const ROAD_W = 84;
+const PALETTE = [0x2a2f4a, 0x3a2f4a, 0x2f4a3a, 0x4a3a2f, 0x353a4d, 0x41354d];
+const NEON_COLORS = [0xff2d78, 0x00e5ff, 0xffb300, 0x7cff00, 0xff5a00];
 
-// Landmarks the missions and menus anchor on.
-export const LANDMARKS = {
-  club:      { x: 620,  y: 300,  label: 'Kestrel Club' },
-  garage:    { x: 1420, y: 820,  label: "Rosa's Garage" },
-  gunshop:   { x: 1150, y: 640,  label: 'Ironworks Arms' },
-  safehouse1:{ x: 420,  y: 420,  label: 'Safehouse — Old Town' },
-  safehouse2:{ x: 2150, y: 500,  label: 'Safehouse — Airfield' },
-  harbor:    { x: 420,  y: 1420, label: 'Harbor Docks' },
-  stash:     { x: 1820, y: 1220, label: 'Stash House' },
-  vault:     { x: 320,  y: 1560, label: 'Rival Vault' },
-  pier:      { x: 420,  y: 1500, label: 'Pier Office' },
-  casino:    { x: 1200, y: 1500, label: 'Neon Mile Casino' },
-  airfield:  { x: 2000, y: 1000, label: 'Airfield — Runway 27' },
-  bossYard:  { x: 2380, y: 1300, label: 'East Yard' },
-  gangCorner:{ x: 1000, y: 1000, label: '5th & Main' },
-};
+export class World {
+  constructor(scene) {
+    this.scene = scene;
+    this.rng = makeRng(SEED);
+    this.colliders = []; // {x0,z0,x1,z1}
+    this.buildings = [];
+    this.lamps = [];
+    this.rain = null;
+    this.rainVel = null;
+    this.timeOfDay = 19.5; // dusk start, hours
+    this.rainIntensity = 0;
+    this._buildGround();
+    this._buildRoads();
+    this._buildBuildings();
+    this._buildLandmarks();
+    this._buildLamps();
+    this._buildRain();
+    this._buildLights();
+  }
 
-// Buildings: {x, y, w, h, kind, label}. All clear of roads and mission points.
-export const BUILDINGS = [
-  { x: 700,  y: 260,  w: 150, h: 130, kind: 'tower', label: 'Solano Tower' },
-  { x: 1000, y: 260,  w: 120, h: 110, kind: 'tower', label: 'Harbor View' },
-  { x: 1300, y: 260,  w: 160, h: 120, kind: 'tower', label: 'Kestrel Plaza' },
-  { x: 1600, y: 300,  w: 110, h: 90,  kind: 'block', label: 'Apartments' },
-  { x: 1900, y: 260,  w: 140, h: 100, kind: 'block', label: 'Motel' },
-  { x: 360,  y: 560,  w: 140, h: 120, kind: 'block', label: 'Row Houses' },
-  { x: 700,  y: 560,  w: 130, h: 110, kind: 'block', label: 'Market Hall' },
-  { x: 1000, y: 560,  w: 120, h: 100, kind: 'block', label: 'Cafe Row' },
-  { x: 1300, y: 560,  w: 140, h: 120, kind: 'block', label: 'Offices' },
-  { x: 1600, y: 560,  w: 150, h: 110, kind: 'block', label: 'Depot' },
-  { x: 1900, y: 560,  w: 130, h: 100, kind: 'block', label: 'Warehouse' },
-  { x: 360,  y: 860,  w: 150, h: 120, kind: 'block', label: 'Old Town Hall' },
-  { x: 700,  y: 860,  w: 120, h: 110, kind: 'block', label: 'Bakery' },
-  { x: 1000, y: 860,  w: 140, h: 120, kind: 'block', label: 'Arcade' },
-  { x: 1300, y: 900,  w: 130, h: 90,  kind: 'block', label: 'Garage Row' },
-  { x: 1600, y: 900,  w: 120, h: 100, kind: 'block', label: 'Storage' },
-  { x: 360,  y: 1160, w: 140, h: 110, kind: 'block', label: 'Fish Market' },
-  { x: 700,  y: 1160, w: 150, h: 120, kind: 'block', label: 'Flats' },
-  { x: 1000, y: 1160, w: 120, h: 110, kind: 'block', label: 'Laundromat' },
-  { x: 1300, y: 1160, w: 140, h: 110, kind: 'block', label: 'Workshops' },
-  { x: 2200, y: 1160, w: 130, h: 120, kind: 'block', label: 'East Yard Sheds' },
-  { x: 700,  y: 1460, w: 140, h: 90,  kind: 'block', label: 'Beach Shops' },
-  { x: 1000, y: 1460, w: 150, h: 90,  kind: 'block', label: 'Boardwalk Inn' },
-  { x: 1600, y: 1460, w: 120, h: 90,  kind: 'block', label: 'Docks Office' },
-  { x: 2200, y: 1460, w: 120, h: 90,  kind: 'block', label: 'Container Office' },
-  { x: 1950, y: 860,  w: 180, h: 80,  kind: 'terminal', label: 'Airfield Terminal' },
-  { x: 1080, y: 1470, w: 110, h: 80,  kind: 'casino', label: 'Casino Aurora' },
-  { x: 1250, y: 1470, w: 110, h: 80,  kind: 'casino', label: 'Casino Mirage' },
-  { x: 1400, y: 1470, w: 110, h: 80,  kind: 'casino', label: 'Casino Velvet' },
-];
+  _mat(color, emissive = 0x000000, eInt = 0) {
+    return new THREE.MeshLambertMaterial({ color, emissive, emissiveIntensity: eInt });
+  }
+  _box(w, h, d, mat, x, y, z, collide = false) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = h > 4;
+    m.receiveShadow = true;
+    this.scene.add(m);
+    if (collide) this.colliders.push({ x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 });
+    return m;
+  }
 
-// Harbor containers (solid, low).
-export const CONTAINERS = [
-  { x: 300, y: 1300, w: 60, h: 40, color: '#a8542a' },
-  { x: 380, y: 1320, w: 60, h: 40, color: '#2a7aa8' },
-  { x: 1700, y: 1300, w: 80, h: 40, color: '#7aa82a' },
-  { x: 1850, y: 1330, w: 80, h: 40, color: '#a82a6a' },
-  { x: 300, y: 1180, w: 60, h: 40, color: '#2a7aa8' },
-];
+  _buildGround() {
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(2600, 1900), this._mat(0x1d2419));
+    g.rotation.x = -Math.PI / 2; g.receiveShadow = true; this.scene.add(g);
+    // Beach sand strip (south) and marina water (south-west).
+    const sand = new THREE.Mesh(new THREE.PlaneGeometry(2200, 150), this._mat(0xc9b078));
+    sand.rotation.x = -Math.PI / 2; sand.position.set(0, 0.05, 700); sand.receiveShadow = true; this.scene.add(sand);
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(500, 150), this._mat(0x0a3a5a));
+    water.rotation.x = -Math.PI / 2; water.position.set(-600, 0.06, 700); this.scene.add(water);
+  }
 
-// Sentry posts for Mission 14 (Silent Pier). Cones face outward from the
-// pier office so a direct approach from the north slips between them, but
-// the south post watches the beach approach.
-export const SENTRY_POSTS = [
-  { x: 520, y: 1440, angle: 0 },
-  { x: 330, y: 1430, angle: Math.PI },
-  { x: 480, y: 1570, angle: -Math.PI / 2 },
-];
-export function districtAt(x, y) {
-  if (x >= 1850 && y <= 1150) return 'Airfield';
-  if (x >= 900 && x < 1600 && y >= 1400) return 'Neon Mile';
-  if (y >= 1250) return 'Harbor';
-  if (x < 900 && y >= 1000) return 'Beachfront';
-  if (x >= 900 && x < 1800 && y >= 250 && y < 1000) return 'Downtown';
-  if (x < 900 && y >= 250 && y < 1000) return 'Old Town';
-  return 'Suburbs';
-}
-
-export function onRoad(x, y) {
-  for (const ry of ROAD_Y) if (Math.abs(y - ry) <= ROAD_W / 2) return true;
-  for (const rx of ROAD_X) if (Math.abs(x - rx) <= ROAD_W / 2) return true;
-  return false;
-}
-
-function circleHitsRect(x, y, r, b) {
-  const cx = Math.max(b.x, Math.min(x, b.x + b.w));
-  const cy = Math.max(b.y, Math.min(y, b.y + b.h));
-  const dx = x - cx, dy = y - cy;
-  return dx * dx + dy * dy < r * r;
-}
-
-export function hitsSolid(x, y, r) {
-  if (x < r || y < r || x > WORLD_W - r || y > WORLD_H - r) return true;
-  for (const b of BUILDINGS) if (circleHitsRect(x, y, r, b)) return true;
-  for (const c of CONTAINERS) if (circleHitsRect(x, y, r, c)) return true;
-  return false;
-}
-
-// Push a circle out of any solid it overlaps; returns true if it collided.
-export function resolveSolid(e, r) {
-  let hit = false;
-  for (const b of [...BUILDINGS, ...CONTAINERS]) {
-    const cx = Math.max(b.x, Math.min(e.x, b.x + b.w));
-    const cy = Math.max(b.y, Math.min(e.y, b.y + b.h));
-    const dx = e.x - cx, dy = e.y - cy;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < r * r && d2 > 0.01) {
-      const d = Math.sqrt(d2);
-      e.x = cx + (dx / d) * r;
-      e.y = cy + (dy / d) * r;
-      hit = true;
-    } else if (d2 <= 0.01) {
-      e.x = b.x - r - 1; // centre exactly inside: shove out to the left
-      hit = true;
+  _buildRoads() {
+    const roadMat = this._mat(0x3d3d4a);
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xd8c84a });
+    for (const x of ROADS_X) {
+      const r = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_WIDTH, 1560), roadMat);
+      r.rotation.x = -Math.PI / 2; r.position.set(x, 0.08, 0); r.receiveShadow = true; this.scene.add(r);
+    }
+    for (const z of ROADS_Z) {
+      const r = new THREE.Mesh(new THREE.PlaneGeometry(2260, ROAD_WIDTH), roadMat);
+      r.rotation.x = -Math.PI / 2; r.position.set(0, 0.08, z); r.receiveShadow = true; this.scene.add(r);
+    }
+    // Centre dashes.
+    for (const x of ROADS_X) for (let z = -700; z < 700; z += 40) {
+      const d = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 12), lineMat);
+      d.rotation.x = -Math.PI / 2; d.position.set(x, 0.1, z); this.scene.add(d);
+    }
+    for (const z of ROADS_Z) for (let x = -1050; x < 1050; x += 40) {
+      const d = new THREE.Mesh(new THREE.PlaneGeometry(12, 1.5), lineMat);
+      d.rotation.x = -Math.PI / 2; d.position.set(x, 0.1, z); this.scene.add(d);
     }
   }
-  e.x = Math.max(r, Math.min(WORLD_W - r, e.x));
-  e.y = Math.max(r, Math.min(WORLD_H - r, e.y));
-  return hit;
+
+  _districtAt(x, z) {
+    for (const d of DISTRICTS) if (x >= d.x0 && x <= d.x1 && z >= d.z0 && z <= d.z1) return d;
+    return DISTRICTS[0];
+  }
+
+  _buildBuildings() {
+    const rng = this.rng;
+    // Blocks between roads: one or two buildings per block, kept off roads.
+    for (let ix = 0; ix < ROADS_X.length - 1; ix++) {
+      for (let iz = 0; iz < ROADS_Z.length - 1; iz++) {
+        const x0 = ROADS_X[ix] + ROAD_WIDTH / 2 + 12;
+        const x1 = ROADS_X[ix + 1] - ROAD_WIDTH / 2 - 12;
+        const z0 = ROADS_Z[iz] + ROAD_WIDTH / 2 + 12;
+        const z1 = ROADS_Z[iz + 1] - ROAD_WIDTH / 2 - 12;
+        const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+        const d = this._districtAt(cx, cz);
+        if (d.name === 'Airfield' || d.name === 'Beachfront' || d.name === 'Marina') continue;
+        if (d.name === 'Harbor' && rng.chance(0.5)) continue; // container yards instead
+        const n = rng.chance(0.55) ? 2 : 1;
+        for (let k = 0; k < n; k++) {
+          const w = rng.range(28, Math.min(70, (x1 - x0) / n - 8));
+          const dep = rng.range(24, Math.min(60, z1 - z0 - 8));
+          const bx = n === 1 ? cx : x0 + (x1 - x0) * (k + 0.5) / n;
+          const bz = cz + rng.range(-8, 8);
+          const h = rng.range(d.hMin, d.hMax);
+          const color = rng.pick(PALETTE);
+          const b = this._box(w, h, dep, this._mat(color), bx, h / 2, bz, true);
+          this.buildings.push(b);
+          // Lit windows: bright emissive strips so the night city reads.
+          if (rng.chance(0.85)) {
+            const win = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.8, Math.min(3.5, h * 0.15)),
+              new THREE.MeshBasicMaterial({ color: rng.chance(0.5) ? 0xffe9a8 : 0x9fd8ff }));
+            win.position.set(bx, h * 0.72, bz + dep / 2 + 0.15); this.scene.add(win);
+            const win2 = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.8, Math.min(2.5, h * 0.1)),
+              new THREE.MeshBasicMaterial({ color: 0xffd27a }));
+            win2.position.set(bx, h * 0.4, bz + dep / 2 + 0.15); this.scene.add(win2);
+          }
+          // Neon trim on Neon Mile / Downtown towers.
+          if (rng.chance(d.neon)) {
+            const neon = this._box(w + 0.6, 0.7, dep + 0.6,
+              new THREE.MeshBasicMaterial({ color: rng.pick(NEON_COLORS) }), bx, h + 0.4, bz);
+            neon.castShadow = false;
+            this.buildings.push(neon);
+          }
+        }
+      }
+    }
+  }
+
+  _buildLandmarks() {
+    const rng = this.rng;
+    // Harbor container yard (west edge).
+    const contColors = [0xc23b2e, 0x2e7dc2, 0x3fae5a, 0xd8a13a];
+    for (let i = 0; i < 26; i++) {
+      const x = rng.range(-1080, -840), z = rng.range(-160, 560);
+      const c = this._box(22, 7, 8, this._mat(rng.pick(contColors)), x, 3.5, z, true);
+      c.rotation.y = rng.chance(0.5) ? 0 : Math.PI / 2;
+    }
+    // Airfield runway + parked plane (north-west).
+    const runway = new THREE.Mesh(new THREE.PlaneGeometry(420, 34), this._mat(0x3a3a44));
+    runway.rotation.x = -Math.PI / 2; runway.position.set(-850, 0.09, -550); this.scene.add(runway);
+    const planeBody = this._box(46, 5, 6, this._mat(0xd8d8de), -850, 4, -600, true);
+    const wing = this._box(10, 1, 44, this._mat(0xb8b8c0), -850, 4.5, -600, false);
+    const tail = this._box(8, 8, 1.5, this._mat(0xff3355), -872, 7, -600, false);
+    void planeBody; void wing; void tail;
+    // Neon Mile casino signs: three tall glowing pylons.
+    const casinos = [[40, 300, 0xff2d78, 'NEON'], [160, 340, 0x00e5ff, 'TIDE'], [260, 260, 0xffb300, 'PALMS']];
+    for (const [x, z, color] of casinos) {
+      const pylon = this._box(3, 22, 3, new THREE.MeshBasicMaterial({ color }), x, 11, z, true);
+      const cap = this._box(10, 3, 3, new THREE.MeshBasicMaterial({ color }), x, 23, z, false);
+      void pylon; void cap;
+    }
+    // Pier (south-west) + marina boats.
+    const pier = this._box(14, 2, 90, this._mat(0x6a4a2a), -960, 1, 660, false);
+    void pier;
+    for (let i = 0; i < 6; i++) {
+      const bx = -720 + i * 52;
+      const hull = this._box(16, 4, 7, this._mat(0xe8e8f0), bx, 2, 700, true);
+      const mast = this._box(1, 12, 1, this._mat(0x8a8a8a), bx, 9, 700, false);
+      void hull; void mast;
+    }
+    // Park trees in Suburbs / Beachfront.
+    for (let i = 0; i < 40; i++) {
+      const x = rng.range(620, 1080), z = rng.range(220, 580);
+      const trunk = this._box(1.5, 5, 1.5, this._mat(0x5a3a22), x, 2.5, z, false);
+      const top = new THREE.Mesh(new THREE.ConeGeometry(6, 12, 6), this._mat(0x2f6a2f));
+      top.position.set(x, 11, z); top.castShadow = true; this.scene.add(top);
+      void trunk;
+    }
+  }
+
+  _buildLamps() {
+    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
+    for (const x of ROADS_X) for (const z of ROADS_Z) {
+      const pole = this._box(0.8, 9, 0.8, this._mat(0x222226), x + 16, 4.5, z + 16, false);
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(1.4, 8, 6), lampMat);
+      bulb.position.set(x + 16, 9.4, z + 16); this.scene.add(bulb);
+      // Warm pool of light on the ground under each lamp.
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(13, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffdf8a, transparent: true, opacity: 0.07 }));
+      pool.rotation.x = -Math.PI / 2; pool.position.set(x + 16, 0.12, z + 16); this.scene.add(pool);
+      this.lamps.push(bulb);
+      void pole;
+    }
+  }
+
+  _buildRain() {
+    const N = 1600;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * 300;
+      pos[i * 3 + 1] = Math.random() * 60;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 300;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.rain = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x9fb8d8, size: 0.55, transparent: true, opacity: 0.7 }));
+    this.rain.visible = false;
+    this.rain.frustumCulled = false;
+    this.scene.add(this.rain);
+  }
+
+  _buildLights() {
+    this.hemi = new THREE.HemisphereLight(0x8fa8ff, 0x1a1410, 0.9);
+    this.scene.add(this.hemi);
+    this.sun = new THREE.DirectionalLight(0xffe0b3, 1.5);
+    this.sun.position.set(120, 180, -60);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(1024, 1024);
+    this.sun.shadow.camera.left = -160; this.sun.shadow.camera.right = 160;
+    this.sun.shadow.camera.top = 160; this.sun.shadow.camera.bottom = -160;
+    this.sun.shadow.camera.far = 600;
+    this.scene.add(this.sun);
+    this.scene.add(this.sun.target);
+    this.scene.fog = new THREE.Fog(0x0a0a18, 60, 320);
+    this.scene.background = new THREE.Color(0x1a2340);
+  }
+
+  // Push a circle out of building colliders. Returns true if it hit.
+  collideCircle(p, r) {
+    let hit = false;
+    for (const c of this.colliders) {
+      const nx = clamp(p.x, c.x0, c.x1), nz = clamp(p.z, c.z0, c.z1);
+      const dx = p.x - nx, dz = p.z - nz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < r * r) {
+        hit = true;
+        if (d2 > 0.0001) {
+          const d = Math.sqrt(d2);
+          p.x = nx + (dx / d) * r; p.z = nz + (dz / d) * r;
+        } else {
+          p.x += r; // centre inside box: shove out on +x
+        }
+      }
+    }
+    p.x = clamp(p.x, WORLD.minX, WORLD.maxX);
+    p.z = clamp(p.z, WORLD.minZ, WORLD.maxZ);
+    return hit;
+  }
+
+  pointInBuilding(x, z) {
+    for (const c of this.colliders) if (x >= c.x0 && x <= c.x1 && z >= c.z0 && z <= c.z1) return true;
+    return false;
+  }
+
+  update(dt, focusX, focusZ) {
+    // Day/night: sun swings with the clock; night is dark blue with lamps on.
+    const t = this.timeOfDay;
+    const day = t > 6 && t < 19;
+    const sunH = Math.sin(((t - 6) / 12) * Math.PI); // 0 at dawn/dusk, 1 at noon
+    const bright = day ? 0.55 + 0.45 * Math.max(0, sunH) : 0.32;
+    this.sun.intensity = day ? 0.7 + 1.1 * Math.max(0, sunH) : 0.3;
+    this.sun.position.set(120 * Math.cos((t / 24) * Math.PI * 2), 60 + 140 * Math.max(0, sunH), -60);
+    this.hemi.intensity = 0.55 + bright * 0.7;
+    const sky = day ? new THREE.Color(0x87a8d8).lerp(new THREE.Color(0x1a2340), 1 - bright) : new THREE.Color(0x0a0a18);
+    this.scene.background = sky;
+    this.scene.fog.color.copy(sky);
+    for (const l of this.lamps) l.material.color.setHex(day ? 0x555544 : 0xffe9a8);
+    // Rain follows the player and falls diagonally.
+    if (this.rainIntensity > 0.02) {
+      this.rain.visible = true;
+      this.rain.material.opacity = 0.35 + 0.45 * this.rainIntensity;
+      this.rain.position.set(focusX, 0, focusZ);
+      const pos = this.rain.geometry.attributes.position.array;
+      const fall = 90 * dt * (0.6 + this.rainIntensity);
+      for (let i = 0; i < pos.length; i += 3) {
+        pos[i + 1] -= fall;
+        pos[i] += fall * 0.22; // wind slant
+        if (pos[i + 1] < 0) { pos[i + 1] = 55 + Math.random() * 5; pos[i] = (Math.random() - 0.5) * 300; pos[i + 2] = (Math.random() - 0.5) * 300; }
+      }
+      this.rain.geometry.attributes.position.needsUpdate = true;
+    } else this.rain.visible = false;
+  }
 }

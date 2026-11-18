@@ -1,18 +1,143 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NEON TIDE — open-world crime in Port Solano</title>
 <style>
-  html, body { margin: 0; padding: 0; background: #0a0c14; height: 100%; overflow: hidden; }
-  #wrap { display: flex; align-items: center; justify-content: center; height: 100vh; }
-  canvas { width: 1280px; height: 720px; max-width: 100vw; max-height: 100vh; background: #14101f; }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0a0a18; font-family: 'Segoe UI', Arial, sans-serif; color: #eee; }
+  #game { display: block; width: 100vw; height: 100vh; }
+  .panel { position: absolute; background: rgba(8, 8, 20, 0.88); border: 2px solid #ff2d78; border-radius: 10px; padding: 18px 22px; }
+  #title { top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; width: 520px; max-width: 92vw; }
+  #title h1 { font-size: 54px; margin: 0; color: #ff2d78; text-shadow: 0 0 18px #ff2d78, 0 0 42px #00e5ff; letter-spacing: 4px; }
+  #title h2 { font-size: 16px; color: #00e5ff; margin: 6px 0 16px; letter-spacing: 2px; }
+  #title p { font-size: 14px; color: #ccc; line-height: 1.5; }
+  button { background: #ff2d78; color: #fff; border: none; border-radius: 6px; padding: 11px 22px; font-size: 16px; cursor: pointer; margin: 5px; }
+  button:hover { background: #ff5a96; }
+  button:disabled { background: #555; cursor: not-allowed; }
+  button.secondary { background: #223; }
+  #hud { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; display: none; }
+  #hud-top { position: absolute; top: 12px; left: 14px; font-size: 17px; text-shadow: 1px 1px 2px #000; line-height: 1.45; }
+  #money { color: #7cff00; font-weight: bold; font-size: 20px; }
+  #wanted { font-size: 24px; letter-spacing: 3px; }
+  #objective { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(8,8,20,.75); padding: 8px 16px; border-radius: 6px; font-size: 15px; border: 1px solid #00e5ff; }
+  #detection { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); width: 260px; display: none; }
+  #detection .lbl { font-size: 11px; color: #ffcc00; text-shadow: 1px 1px 2px #000; text-align: center; margin-bottom: 2px; }
+  #detection .bar { height: 10px; background: #222; border: 1px solid #555; border-radius: 4px; overflow: hidden; }
+  #detection-fill { height: 100%; background: #ffcc00; width: 0%; }
+  #bars { position: absolute; left: 14px; bottom: 14px; width: 240px; }
+  .bar { height: 14px; background: #222; border: 1px solid #555; border-radius: 4px; margin: 4px 0; overflow: hidden; }
+  .bar > div { height: 100%; }
+  #health-fill { background: #33cc55; width: 100%; }
+  #armor-fill { background: #5599ff; width: 0%; }
+  #nos-fill { background: #33aaff; width: 0%; }
+  #speed { position: absolute; right: 18px; bottom: 16px; font-size: 26px; font-weight: bold; text-shadow: 1px 1px 3px #000; }
+  #district { position: absolute; right: 18px; top: 12px; font-size: 15px; color: #9fd8ff; text-shadow: 1px 1px 2px #000; }
+  #minimap { position: absolute; right: 14px; bottom: 60px; border: 2px solid #444; border-radius: 6px; background: #101018; }
+  #popup { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); background: rgba(8,8,20,.85); border: 1px solid #ffd34a; color: #ffd34a; padding: 10px 20px; border-radius: 6px; font-size: 17px; display: none; }
+  #heat-score { position: absolute; top: 130px; left: 50%; transform: translateX(-50%); color: #ff6644; font-size: 18px; font-weight: bold; text-shadow: 1px 1px 2px #000; }
+  #controls { position: absolute; left: 14px; bottom: 120px; font-size: 12px; color: #aaa; line-height: 1.5; text-shadow: 1px 1px 2px #000; }
+  #pause-panel, #busted-panel, #wasted-panel, #won-panel, #failed-panel { top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; display: none; width: 420px; max-width: 92vw; }
+  #garage-panel, #gunshop-panel { top: 50%; left: 50%; transform: translate(-50%, -50%); display: none; width: 460px; max-width: 92vw; }
+  #garage-panel button, #gunshop-panel button { display: block; width: 100%; margin: 6px 0; text-align: left; }
+  .shop-title { font-size: 22px; color: #00e5ff; margin: 0 0 10px; }
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="game" width="1280" height="720"></canvas></div>
-<p style="position:fixed;bottom:4px;left:0;right:0;text-align:center;color:#666;font:12px monospace;margin:0">WASD move &amp; drive · E interact · mouse aim · Shift run / NOS · R radio · Esc pause</p>
-<script type="module" src="./src/main.js"></script>
+<canvas id="game"></canvas>
+
+<div id="title" class="panel">
+  <h1>NEON TIDE</h1>
+  <h2>OPEN-WORLD CRIME IN PORT SOLANO</h2>
+  <p>Deke Marlowe is back in Port Solano — and he owes Madame Kestrel <b>$50,000</b>.
+  Steal cars, outrun the Port Solano PD, take 18 story missions, upgrade your ride
+  with NOS, and take the port back from Rook's crew. 3D chase camera, day/night,
+  rain, helicopter chases, radio and an endless Heat Wave mode.</p>
+  <button id="btn-new">NEW GAME</button>
+  <button id="btn-continue" class="secondary">CONTINUE</button>
+  <button id="btn-heat" class="secondary">HEAT WAVE (ENDLESS)</button>
+  <p style="font-size:12px">WASD drive / walk &nbsp;·&nbsp; E enter car / interact &nbsp;·&nbsp; Mouse aim + click shoot<br>
+  Shift NOS boost (in car) / run (on foot) &nbsp;·&nbsp; Space handbrake &nbsp;·&nbsp; 1/2/3 weapons &nbsp;·&nbsp; C radio &nbsp;·&nbsp; Esc pause</p>
+</div>
+
+<div id="hud">
+  <div id="hud-top">
+    <div id="money">$150</div>
+    <div id="debt">Debt: $50,000</div>
+    <div id="wanted">☆☆☆☆☆</div>
+    <div><span id="weapon">PISTOL</span> · <span id="ammo">24</span> · <span id="clock">19:30</span></div>
+  </div>
+  <div id="objective">M1 Welcome Back: Walk to Club Kestrel</div>
+  <div id="detection"><div class="lbl">DETECTED — stay out of the yellow cones</div><div class="bar"><div id="detection-fill"></div></div></div>
+  <div id="district">Downtown</div>
+  <div id="bars">
+    <div class="bar"><div id="health-fill"></div></div>
+    <div class="bar"><div id="armor-fill"></div></div>
+    <div class="bar"><div id="nos-fill"></div></div>
+  </div>
+  <div id="speed">0 km/h</div>
+  <canvas id="minimap" width="220" height="150"></canvas>
+  <div id="popup"></div>
+  <div id="heat-score"></div>
+  <div id="controls">WASD move · E interact · Click shoot · Shift NOS/run · Space brake · 1/2/3 weapon · C radio · Esc pause</div>
+</div>
+
+<div id="pause-panel" class="panel">
+  <h2>PAUSED</h2>
+  <p>Port Solano waits for no one. Well — except now.</p>
+  <button id="btn-resume">RESUME</button>
+  <button id="btn-quit-title" class="secondary">QUIT TO TITLE</button>
+</div>
+
+<div id="busted-panel" class="panel">
+  <h2>BUSTED!</h2>
+  <p>The Port Solano PD hauled you in. Bail cost you $500.</p>
+  <button id="btn-busted-ok">BACK ON THE STREETS</button>
+</div>
+
+<div id="wasted-panel" class="panel">
+  <h2>WASTED</h2>
+  <p>Deke got flatlined. The hospital patched him up — $250.</p>
+  <button id="btn-wasted-ok">WAKE UP</button>
+</div>
+
+<div id="won-panel" class="panel">
+  <h2 style="color:#7cff00">KING OF PORT SOLANO</h2>
+  <p>You took the port, settled the $50,000 debt and Rook is history. Port Solano is yours.</p>
+  <button id="btn-won-again">PLAY AGAIN</button>
+</div>
+
+<div id="failed-panel" class="panel">
+  <h2 style="color:#ff6644">MISSION FAILED</h2>
+  <p id="failed-reason"></p>
+  <button id="btn-retry">RETRY MISSION (R)</button>
+</div>
+
+<div id="garage-panel" class="panel">
+  <p class="shop-title">ROSA'S GARAGE</p>
+  <button data-buy="engine">ENGINE Lv0</button>
+  <button data-buy="grip">GRIP TIRES Lv0</button>
+  <button data-buy="armor">CAR ARMOR Lv0</button>
+  <button data-buy="nos">NOS KIT Lv0</button>
+  <button id="garage-service" class="secondary">FULL SERVICE — repair + NOS refill ($150)</button>
+  <button data-radio="1" class="secondary">CHANGE RADIO STATION</button>
+  <p id="radio-station">Radio: Neon FM</p>
+  <button id="garage-close" class="secondary">CLOSE (E)</button>
+</div>
+
+<div id="gunshop-panel" class="panel">
+  <p class="shop-title">IRONWORKS ARMS</p>
+  <button data-buy="smg">SMG — $800</button>
+  <button data-buy="ammo-pistol">Pistol ammo x24 — $120</button>
+  <button data-buy="ammo-smg">SMG ammo x40 — $200</button>
+  <button data-buy="armor">Body armor (+50) — $350</button>
+  <button id="gunshop-close" class="secondary">CLOSE (E)</button>
+</div>
+
+<script src="./vendor/three.min.js"></script>
+<script type="module">
+  import { boot } from './src/main.js';
+  boot();
+</script>
 </body>
 </html>

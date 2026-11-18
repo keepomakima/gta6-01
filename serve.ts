@@ -1,39 +1,64 @@
-// NEON TIDE v5 — static dev server. Serves the repo root on :8080 so the
-// game loads at http://localhost:8080/ (game/index.html) with no build
-// step and no network requests. Node 22, standard library only.
+// NEON TIDE v6 — a tiny static server for game/ (Node 22, standard library
+// only). `node serve.ts` serves game/ on http://localhost:8080 (or
+// --port <n>). It sends the MIME types a browser game needs, refuses any
+// path outside game/, and does nothing clever: a development convenience,
+// not a web server for the internet.
+import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, statSync } from 'node:fs';
-import { join, extname, dirname } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = dirname(fileURLToPath(import.meta.url));
+const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const args = process.argv.slice(2);
+const portIndex = args.indexOf('--port');
+const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
+const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
+
 const MIME = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.mjs': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.jpg': 'image/jpeg',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
-const server = createServer((req, res) => {
-  const url = decodeURIComponent((req.url || '/').split('?')[0]);
-  let path = url === '/' ? '/game/index.html' : url;
-  let file = join(root, path);
-  // The game lives under game/ but is served at /: a request for /src/x
-  // falls back to game/src/x so the page's relative module paths resolve.
-  if ((!existsSync(file) || !statSync(file).isFile()) && path !== '/game/index.html') {
-    const alt = join(root, 'game', path.replace(/^\//, ''));
-    if (existsSync(alt) && statSync(alt).isFile()) file = alt;
-  }
-  if (!file.startsWith(root) || !existsSync(file) || !statSync(file).isFile()) {
-    res.writeHead(404, { 'content-type': 'text/plain' });
-    res.end('not found');
+createServer((request, response) => {
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    response.writeHead(400).end('bad request');
     return;
   }
-  res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
-  res.end(readFileSync(file));
+  if (pathname.endsWith('/')) pathname += 'index.html';
+  const file = resolve(join(root, normalize(pathname)));
+  if (file !== root && !file.startsWith(root + sep)) {
+    response.writeHead(403).end('forbidden');
+    return;
+  }
+  let size;
+  try {
+    const stats = statSync(file);
+    if (!stats.isFile()) throw new Error('not a file');
+    size = stats.size;
+  } catch {
+    response.writeHead(404).end('not found');
+    return;
+  }
+  response.writeHead(200, {
+    'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'content-length': size,
+    'cache-control': 'no-store',
+  });
+  createReadStream(file).pipe(response);
+}).listen(port, '127.0.0.1', () => {
+  console.log(`game/ is on http://localhost:${port}`);
 });
-
-server.listen(8080, () => console.log('NEON TIDE serving on http://localhost:8080/'));

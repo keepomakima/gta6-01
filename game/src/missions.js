@@ -1,316 +1,288 @@
-// NEON TIDE v5 — all 15 missions. Each mission is a small state machine:
-// startMission sets the stage, updateMission advances it, completeMission
-// pays out and moves on. Timers fail and restart their mission; combat
-// missions are balanced to be winnable on foot (see ENEMY_DMG).
-import { MISSIONS, ENEMY_HP, BOSS_HP, MISSION_TIMERS, SENTRY_RANGE, SENTRY_HALF_ANGLE, DETECT_RATE, DETECT_FALL } from './config.js';
-import { LANDMARKS, SENTRY_POSTS } from './world.js';
-import { makeEnemy } from './entities.js';
-import { dist, angleDiff } from './random.js';
-import { addWanted } from './police.js';
+// NEON TIDE v6 — story missions. 18 missions: the v5 fifteen (M1-M12
+// original arc + M13 Midnight Run + M14 Silent Pier + M15 Neon Mile) plus
+// three new ones (M16 Harbor Storm, M17 The Broker — second boss Vex,
+// M18 King of Port Solano — finale). Deke owes Madame Kestrel $50,000;
+// every reward pays the debt down. Step kinds: goto, timed, kill, grab,
+// tail, stealth, survive, boss. Failing a step retries the mission.
+import { ANCHORS } from './config.js';
+import { dist2d, clamp } from './rng.js';
 
-const near = (g, x, y, r) => dist(g.player.x, g.player.y, x, y) < r;
+function goto(x, z, r, label) { return { kind: 'goto', x, z, r, label }; }
+function timed(x, z, r, secs, label) { return { kind: 'timed', x, z, r, secs, label }; }
+function kill(n, spawns, label) { return { kind: 'kill', n, spawns, label }; }
+function grab(x, z, r, label) { return { kind: 'grab', x, z, r, label }; }
+function tailM(label) { return { kind: 'tail', label }; }
+function stealth(x, z, r, sentries, label) { return { kind: 'stealth', x, z, r, sentries, label }; }
+function survive(label) { return { kind: 'survive', label }; }
+function boss(spawn, label) { return { kind: 'boss', spawn, label }; }
 
-function say(g, name, text) {
-  g.dialog = { name, text, t: 5 };
-  g.popup(`${name}: ${text}`);
-}
+export const MISSIONS = [
+  { id: 1, name: 'Welcome Back', reward: 200, steps: [goto(14, 40, 18, 'Walk to Club Kestrel')] },
+  { id: 2, name: 'Hot Wheels', reward: 500, steps: [
+    goto(414, 60, 16, 'Steal the sport car'), goto(214, 300, 18, 'Deliver it to Rosa\'s Garage (slow down!)')] },
+  { id: 3, name: 'Harbor Run', reward: 700, steps: [timed(-986, 300, 18, 75, 'Deliver the package to the Harbor dock')] },
+  { id: 4, name: 'Lose the Heat', reward: 400, steps: [survive('Lose the wanted level — stay out of sight')] },
+  { id: 5, name: 'Street Fight', reward: 800, steps: [kill(4, [[-620, 280], [-580, 320], [-600, 260], [-640, 300]], 'Clear the rival corner')] },
+  { id: 6, name: 'Payback', reward: 1500, steps: [
+    kill(3, [[-900, -140], [-860, -100], [-880, -80]], 'Clear the stash house guards'),
+    grab(-786, -120, 18, 'Grab the stash'),
+    goto(814, 420, 20, 'Escape to the Suburbs safehouse')] },
+  { id: 7, name: 'The Setup', reward: 900, steps: [tailM('Tail the courier — stay 25 to 90 away, do not get spotted')] },
+  { id: 8, name: 'The Big One', reward: 3000, steps: [
+    kill(4, [[-986, 280], [-960, 320], [-986, 260], [-940, 300]], 'Clear the dock crew'),
+    grab(-986, 300, 18, 'Grab the port cargo'),
+    goto(214, 300, 20, 'Escape to Rosa\'s Garage')] },
+  { id: 9, name: 'Dock War', reward: 1200, steps: [kill(5, [[-920, 80], [-880, 120], [-900, 160], [-860, 100], [-940, 140]], 'Take the container yard')] },
+  { id: 10, name: 'Midnight Courier', reward: 1000, steps: [
+    timed(300, -400, 18, 45, 'Drop 1: Old Town corner'),
+    timed(-600, 500, 18, 60, 'Drop 2: Marina gate')] },
+  { id: 11, name: 'Vault Break', reward: 2000, steps: [
+    kill(5, [[-720, 600], [-680, 640], [-700, 580], [-660, 620], [-740, 620]], 'Silence the vault guards'),
+    grab(-700, 620, 18, 'Crack the vault (+$2,000)')] },
+  { id: 12, name: 'Rook', reward: 4000, steps: [boss({ x: 950, z: -620, hp: 220, name: 'Rook' }, 'Take down Rook, the rival boss')] },
+  { id: 13, name: 'Midnight Run', reward: 2500, steps: [
+    timed(300, -400, 18, 30, 'Stop 1: Old Town'),
+    timed(-600, 300, 18, 30, 'Stop 2: Harbor gate'),
+    timed(814, 420, 18, 30, 'Stop 3: Suburbs safehouse')] },
+  { id: 14, name: 'Silent Pier', reward: 2200, steps: [
+    stealth(-960, 700, 16, [[-940, 640, 0], [-980, 660, 2.2], [-950, 690, 1.1]], 'Reach the end of the pier unseen')] },
+  { id: 15, name: 'Neon Mile', reward: 4000, steps: [
+    grab(214, 320, 16, 'Lift the casino cash (+$4,000)'),
+    goto(-850, -550, 22, 'Escape to the Airfield — wanted 4!')] },
+  { id: 16, name: 'Harbor Storm', reward: 2800, steps: [
+    kill(6, [[-620, 660], [-580, 690], [-640, 700], [-600, 650], [-560, 680], [-660, 670]], 'Storm the marina'),
+    goto(0, 700, 22, 'Vanish along Beachfront')] },
+  { id: 17, name: 'The Broker', reward: 5000, steps: [boss({ x: 814, z: -480, hp: 260, name: 'Vex' }, 'Take down Vex, the Broker — second boss')] },
+  { id: 18, name: 'King of Port Solano', reward: 10000, steps: [
+    kill(4, [[920, -600], [980, -640], [900, -660], [960, -580]], 'Break the arena guards'),
+    boss({ x: 950, z: -620, hp: 320, name: 'Rook Reborn' }, 'Finish Rook Reborn and take the port'),
+    goto(-850, -550, 22, 'Escape to the Airfield — wanted 5!')] },
+];
 
-export function startMission(g, n) {
-  const m = g.mission;
-  m.idx = n; m.stage = 0; m.data = {}; m.target = null; m.done = false;
-  const def = MISSIONS[n - 1];
-  g.popup(`MISSION ${n}/15 — ${def.title}`);
-  switch (n) {
-    case 1:
-      m.target = { ...LANDMARKS.club, label: 'Kestrel Club' };
-      say(g, 'Madame Kestrel', 'Deke. You owe me $50,000. Walk to my club — now.');
-      break;
-    case 2:
-      m.target = { ...LANDMARKS.garage, label: "Rosa's Garage" };
-      say(g, 'Madame Kestrel', 'Steal a sport car. Bring it to Rosa\'s Garage.');
-      break;
-    case 3:
-      m.data.timer = MISSION_TIMERS.m3;
-      m.target = { ...LANDMARKS.harbor, label: 'Harbor Docks' };
-      say(g, 'Madame Kestrel', 'Package to the Harbor. 120 seconds. Don\'t dawdle.');
-      break;
-    case 4:
-      m.target = { x: 1200, y: 500, label: 'Lose the cops' };
-      addWanted(g, 3, 'the heat is on');
-      say(g, 'Rosa', 'Three stars, Deke. Break line of sight until it cools off.');
-      break;
-    case 5: {
-      m.target = { ...LANDMARKS.gangCorner, label: '5th & Main' };
-      // Gang holds the open plaza south of the corner — clear ground, no
-      // building edges between the player and the shooters.
-      const spots = [[950, 1030], [1070, 1050], [1000, 1100], [930, 1080]];
-      g.enemies = spots.map(([x, y]) => makeEnemy(x, y, { hp: ENEMY_HP }));
-      say(g, 'Madame Kestrel', 'Rival gang owns 5th & Main. Clear the corner.');
-      break;
-    }
-    case 6:
-      m.target = { ...LANDMARKS.stash, label: 'Stash House' };
-      say(g, 'Rosa', 'Hit the stash house, then bring the take to my garage.');
-      break;
-    case 7: {
-      m.data.followT = 0;
-      m.data.target = { x: 1500, y: 500, tx: 1500, ty: 500, angle: 0 };
-      m.data.wps = [[1500, 500], [1500, 1100], [900, 1100], [900, 500]];
-      m.data.wp = 0;
-      m.target = { x: 1500, y: 500, label: 'Tail the target' };
-      say(g, 'Madame Kestrel', 'Follow him. Close enough to see, far enough to stay invisible.');
-      break;
-    }
-    case 8:
-      m.data.fares = [[1820, 420], [620, 820], [420, 1120]];
-      m.data.fare = 0;
-      m.target = { x: 1820, y: 420, label: 'Fare 1/3' };
-      say(g, 'Rosa', 'Drive the taxi. Three fares. The meter is running.');
-      break;
-    case 9:
-      m.data.timer = MISSION_TIMERS.m9;
-      m.data.gates = [[2220, 220], [2220, 1420], [620, 1420]];
-      m.data.gate = 0;
-      m.target = { x: 2220, y: 220, label: 'Gate 1/3' };
-      say(g, 'Rosa', 'Three gates, one winner. Go!');
-      break;
-    case 10:
-      m.data.crates = [[1780, 1380], [1900, 1460], [1840, 1560]];
-      m.data.crate = 0;
-      m.target = { x: 1780, y: 1380, label: 'Crate 1/3' };
-      say(g, 'Madame Kestrel', 'Three gear crates at the east docks. Collect them all.');
-      break;
-    case 11: {
-      m.target = { ...LANDMARKS.vault, label: 'Rival Vault' };
-      const spots = [[280, 1500], [380, 1520], [260, 1580], [400, 1580], [320, 1470]];
-      g.enemies = spots.map(([x, y]) => makeEnemy(x, y, { hp: ENEMY_HP, guard: true }));
-      say(g, 'Madame Kestrel', 'The vault. Five guards. Drop them, then run to the garage.');
-      break;
-    }
-    case 12: {
-      m.target = { ...LANDMARKS.bossYard, label: 'East Yard' };
-      // Boss and guards hold open ground east of the sheds — nobody spawns
-      // inside a building or exactly on top of the player's arrival point.
-      const boss = makeEnemy(2340, 1260, { hp: BOSS_HP, boss: true });
-      const guards = [[2340, 1240], [2300, 1340], [2380, 1360]].map(([x, y]) => makeEnemy(x, y, { hp: ENEMY_HP, guard: true }));
-      g.enemies = [boss, ...guards];
-      say(g, 'Boss Rook', 'So the rat came home. Boys — kill him.');
-      break;
-    }
-    case 13:
-      m.data.timer = MISSION_TIMERS.m13;
-      m.data.stops = [[2015, 1120], [1200, 1500], [620, 300]];
-      m.data.stop = 0;
-      m.target = { x: 2015, y: 1120, label: 'Stop 1/3 — 90s' };
-      say(g, 'Rosa', 'Midnight Run: three stops, ninety seconds. Drive like the tide.');
-      break;
-    case 14: {
-      m.data.detection = 0;
-      m.data.sentries = SENTRY_POSTS.map((s) => ({ ...s }));
-      m.target = { ...LANDMARKS.pier, label: 'Pier Office' };
-      say(g, 'Madame Kestrel', 'Silent Pier. Sentries watch the docks — stay out of their cones.');
-      break;
-    }
-    case 15:
-      m.target = { ...LANDMARKS.casino, label: 'Neon Mile Casino' };
-      say(g, 'Madame Kestrel', 'The Neon Mile casino. Take the $4,000, then vanish to the Airfield.');
-      break;
+export class Missions {
+  constructor(ctx) {
+    this.ctx = ctx; // {player, police, combat, traffic, world, audio, onEvent}
+    this.index = 0; // 0-based into MISSIONS
+    this.stepIndex = 0;
+    this.kills = 0;
+    this.timer = 0;
+    this.detection = 0;
+    this.failed = false;
+    this.failReason = '';
+    this.done = false; // all missions complete
+    this.tail = null; // {x,z,heading,wp,progress,mesh}
+    this.tailTime = 0;
+    this.sentries = [];
+    this.stepEntered = false;
+    this.nextDelay = 0;
+    this.frozen = false; // shots freeze the mission machine (no fail/timer)
   }
-}
 
-export function completeMission(g) {
-  const n = g.mission.idx;
-  const def = MISSIONS[n - 1];
-  g.money += def.reward;
-  g.missionsDone = Math.max(g.missionsDone, n);
-  g.popup(`MISSION COMPLETE — ${def.title} +$${def.reward}`);
-  g.audio.fanfare();
-  g.save();
-  if (n >= 15) {
-    // The finale pays once and stays done: free-roam after the ending
-    // must not re-trigger the escape (and re-pay) on every airfield visit.
-    g.mission.done = true;
-    g.mode = 'complete';
-    g.save();
-    return;
+  current() { return this.index < MISSIONS.length ? MISSIONS[this.index] : null; }
+  step() { const m = this.current(); return m ? m.steps[this.stepIndex] : null; }
+  objective() {
+    const m = this.current();
+    if (!m) return 'Port Solano is yours.';
+    const s = this.step();
+    return `M${m.id} ${m.name}: ${s ? s.label : ''}`;
   }
-  startMission(g, n + 1);
-}
 
-export function failMission(g, why) {
-  g.popup(`MISSION FAILED — ${why}. Try again.`);
-  startMission(g, g.mission.idx);
-}
+  startMission(i) {
+    this.index = Math.max(0, Math.min(MISSIONS.length - 1, i));
+    this.stepIndex = 0; this.kills = 0; this.detection = 0;
+    this.failed = false; this.failReason = ''; this.done = false;
+    this._cleanupStep();
+    this.stepEntered = false;
+    this.ctx.onEvent && this.ctx.onEvent('mission-start', this.current());
+  }
 
-function tickTimer(g, dt) {
-  const m = g.mission;
-  if (m.data.timer === undefined) return false;
-  m.data.timer -= dt;
-  if (m.data.timer <= 0) { failMission(g, 'time ran out'); return true; }
-  return false;
-}
+  retry() { this.startMission(this.index); }
 
-export function updateMissions(g, dt) {
-  if (g.mode !== 'play' || g.mission.done) return;
-  const m = g.mission;
-  const n = m.idx;
-  switch (n) {
-    case 1:
-      if (near(g, LANDMARKS.club.x, LANDMARKS.club.y, 90)) completeMission(g);
-      break;
-    case 2:
-      // Deliver the car: arrive at the garage and bring it to a stop.
-      // (A fast drive-by down the road does not count as a delivery.)
-      if (g.player.inCar && g.player.car && Math.abs(g.player.car.speed) < 120
-        && near(g, LANDMARKS.garage.x, LANDMARKS.garage.y, 110)) completeMission(g);
-      break;
-    case 3:
-      if (tickTimer(g, dt)) break;
-      if (g.player.inCar && g.player.car && Math.abs(g.player.car.speed) < 120
-        && near(g, LANDMARKS.harbor.x, LANDMARKS.harbor.y, 110)) completeMission(g);
-      break;
-    case 4:
-      if (g.wanted <= 0) completeMission(g);
-      break;
-    case 5:
-      if (g.enemies.length && g.enemies.every((e) => !e.alive)) completeMission(g);
-      break;
-    case 6:
-      if (m.stage === 0 && near(g, LANDMARKS.stash.x, LANDMARKS.stash.y, 100)) {
-        m.stage = 1;
-        m.target = { ...LANDMARKS.garage, label: "Rosa's Garage" };
-        g.money += 1500;
-        addWanted(g, 2, 'the stash alarm');
-        say(g, 'Rosa', 'Got it. Now bring it home — the alarm is up!');
-      } else if (m.stage === 1 && near(g, LANDMARKS.garage.x, LANDMARKS.garage.y, 110)) {
-        completeMission(g);
+  _cleanupStep() {
+    if (this.tail) { this.ctx.scene.remove(this.tail.mesh); this.tail = null; }
+    for (const s of this.sentries) this.ctx.scene.remove(s.mesh);
+    this.sentries = [];
+  }
+
+  _enterStep() {
+    const s = this.step();
+    if (!s) return;
+    this.stepEntered = true;
+    const ctx = this.ctx;
+    if (s.kind === 'timed') this.timer = s.secs;
+    if (s.kind === 'kill' || s.kind === 'boss') {
+      this.kills = 0;
+      ctx.combat.clearEnemies();
+      if (s.kind === 'kill') {
+        for (const [x, z] of s.spawns) ctx.combat.spawnEnemy(x, z);
+      } else {
+        const b = s.spawn;
+        ctx.combat.spawnEnemy(b.x, b.z, { boss: true, hp: b.hp, name: b.name, damage: 3, interval: 1.2 });
+        // Boss guards.
+        ctx.combat.spawnEnemy(b.x - 30, b.z + 20, { hp: 80 });
+        ctx.combat.spawnEnemy(b.x + 30, b.z - 20, { hp: 80 });
       }
-      break;
-    case 7: {
-      const t = m.data.target;
-      const wps = m.data.wps;
-      const [wx, wy] = wps[m.data.wp];
-      const d = dist(t.x, t.y, wx, wy);
-      if (d < 20) m.data.wp = (m.data.wp + 1) % wps.length;
+    }
+    if (s.kind === 'tail') {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.4, 1.0), new THREE.MeshLambertMaterial({ color: 0x8a6a2a }));
+      body.position.y = 2.4; g.add(body);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), new THREE.MeshLambertMaterial({ color: 0xd8b090 }));
+      head.position.y = 4.0; g.add(head);
+      g.position.set(-200, 0, 400);
+      ctx.scene.add(g);
+      this.tail = { mesh: g, x: -200, z: 400, wp: 0, progress: 0, heading: 0 };
+      this.tailTime = 0;
+      this.tailGrace = 4; // seconds to find the courier before 'lost' counts
+    }
+    if (s.kind === 'stealth') {
+      this.detection = 0;
+      ctx.combat.clearEnemies();
+      for (const [x, z, h] of s.sentries) {
+        const e = ctx.combat.spawnEnemy(x, z, { hp: 60, damage: 0, interval: 99, speed: 0, target: { x, z } });
+        e.mesh.rotation.y = h;
+        e.heading = h;
+        // Vision cone: a flat triangle on the ground, apex at the sentry,
+        // widening to 32 units across at 70 units ahead.
+        const coneGeo = new THREE.BufferGeometry();
+        coneGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+          0, 0, 0, -22, 0, 70, 22, 0, 70,
+        ]), 3));
+        coneGeo.computeVertexNormals();
+        const cone = new THREE.Mesh(coneGeo,
+          new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 0.22, side: THREE.DoubleSide }));
+        cone.position.set(0, 1.0, 0); // above the pier deck (top 0.8)
+        e.mesh.add(cone);
+        this.sentries.push(e);
+      }
+    }
+    if (s.kind === 'survive') {
+      ctx.police.setWanted(3);
+      this.timer = 0;
+    }
+    if (this.current() && this.current().id === 18 && this.stepIndex === 2) {
+      ctx.police.setWanted(5); // finale escape: full heat
+    }
+    if (this.current() && this.current().id === 15 && s.kind === 'grab') {
+      // Casino grab arms the escape: wanted jumps when the cash is lifted.
+    }
+  }
+
+  _advance() {
+    const m = this.current();
+    this.stepIndex++;
+    this.stepEntered = false;
+    this._cleanupStep();
+    if (this.stepIndex >= m.steps.length) {
+      // Mission complete: pay out.
+      this.ctx.onEvent && this.ctx.onEvent('mission-complete', m);
+      this.index++;
+      this.stepIndex = 0;
+      if (this.index >= MISSIONS.length) { this.done = true; this.ctx.onEvent && this.ctx.onEvent('game-won'); return; }
+      this.nextDelay = 1.0; // breather before the next mission's first step
+    }
+  }
+
+  fail(reason) {
+    this.failed = true;
+    this.failReason = reason;
+    this.ctx.onEvent && this.ctx.onEvent('mission-failed', reason);
+  }
+
+  completeStep() {
+    // Debug/test helper: force the current step done (also clears a fail,
+    // so a forced advance always lets the mission machine run on).
+    this.failed = false;
+    this.failReason = '';
+    const s = this.step();
+    if (!s) return;
+    if (s.kind === 'kill' || s.kind === 'boss') this.ctx.combat.shootAll();
+    this._advance();
+  }
+
+  update(dt) {
+    if (this.done || this.failed || this.frozen) return;
+    const m = this.current();
+    if (!m) return;
+    if (this.nextDelay > 0) { this.nextDelay -= dt; if (this.nextDelay <= 0) this.stepEntered = false; return; }
+    if (!this.stepEntered) this._enterStep();
+    const s = this.step();
+    if (!s) return;
+    const p = this.ctx.player.pos;
+    const d = (x, z) => dist2d(p.x, p.z, x, z);
+
+    if (s.kind === 'goto' || s.kind === 'grab') {
+      if (d(s.x, s.z) < s.r) {
+        // M2 step 0 only counts once Deke is actually in the stolen sport.
+        if (m.id === 2 && this.stepIndex === 0 && !this.ctx.player.car) return;
+        if (s.kind === 'grab' && m.id === 15) this.ctx.police.setWanted(4);
+        if (s.kind === 'grab' && m.id === 11) this.ctx.onEvent && this.ctx.onEvent('bonus', 2000);
+        if (s.kind === 'grab' && m.id === 15) this.ctx.onEvent && this.ctx.onEvent('bonus', 4000);
+        // Delivery steps want the car nearly stopped, not a drive-by.
+        if (m.id === 2 && this.stepIndex === 1) {
+          const car = this.ctx.player.car;
+          if (!car || Math.abs(car.speed) > 120) return;
+        }
+        this._advance();
+      }
+    } else if (s.kind === 'timed') {
+      this.timer -= dt;
+      if (d(s.x, s.z) < s.r) {
+        if (m.id === 3 || m.id === 10 || m.id === 13) {
+          const car = this.ctx.player.car;
+          if (car && Math.abs(car.speed) > 120) return;
+        }
+        this._advance();
+      } else if (this.timer <= 0) this.fail('Out of time — the drop went cold.');
+    } else if (s.kind === 'kill' || s.kind === 'boss') {
+      const need = s.kind === 'kill' ? s.n : 1;
+      // kills counted via combat.onKill below; also count remaining enemies.
+      const alive = this.ctx.combat.enemies.length;
+      const target = s.kind === 'kill' ? s.spawns.length : 3; // boss + 2 guards
+      if (this.kills >= need || (s.kind === 'boss' && alive === 0)) this._advance();
+      else if (s.kind === 'kill' && this.kills >= s.n) this._advance();
+      void target;
+    } else if (s.kind === 'survive') {
+      if (this.ctx.police.wanted <= 0) this._advance();
+    } else if (s.kind === 'tail') {
+      const t = this.tail;
+      if (!t) return;
+      // Courier strolls a fixed route through Downtown.
+      const route = [[-200, 400], [-200, 0], [0, 0], [0, -200], [200, -200], [200, 200]]; // road route, never through buildings
+      const wp = route[t.wp];
+      const td = dist2d(t.x, t.z, wp[0], wp[1]);
+      if (td < 8) t.wp = (t.wp + 1) % route.length;
+      const h = Math.atan2(wp[0] - t.x, wp[1] - t.z);
+      t.heading = h;
+      t.x += Math.sin(h) * 12 * dt;
+      t.z += Math.cos(h) * 12 * dt;
+      t.mesh.position.set(t.x, 0, t.z);
+      t.mesh.rotation.y = h;
+      const pd = dist2d(p.x, p.z, t.x, t.z);
+      // Grace period first: the player may start far from the courier.
+      if (this.tailGrace > 0) this.tailGrace -= dt;
       else {
-        const a = Math.atan2(wy - t.y, wx - t.x);
-        t.angle = a;
-        t.x += Math.cos(a) * 85 * dt;
-        t.y += Math.sin(a) * 85 * dt;
+        if (pd < 25) { this.fail('Spotted! The courier made you.'); return; }
+        if (pd > 110) { this.fail('Lost the courier.'); return; }
       }
-      m.target = { x: t.x, y: t.y, label: 'Tail the target' };
-      const pd = dist(g.player.x, g.player.y, t.x, t.y);
-      if (pd < 60) {
-        m.data.followT = Math.max(0, m.data.followT - dt * 2);
-        g.popup('TOO CLOSE — back off!');
-      } else if (pd < 320) {
-        m.data.followT += dt;
-      }
-      if (m.data.followT >= 25) completeMission(g);
-      break;
-    }
-    case 8: {
-      const fares = m.data.fares;
-      const [fx, fy] = fares[m.data.fare];
-      if (g.player.inCar && g.player.car && g.player.car.type === 'taxi' && near(g, fx, fy, 100)) {
-        g.money += 400;
-        g.popup(`Fare ${m.data.fare + 1}/3 — +$400`);
-        m.data.fare++;
-        if (m.data.fare >= fares.length) completeMission(g);
-        else {
-          const [nx, ny] = fares[m.data.fare];
-          m.target = { x: nx, y: ny, label: `Fare ${m.data.fare + 1}/3` };
-        }
-      }
-      break;
-    }
-    case 9: {
-      if (tickTimer(g, dt)) break;
-      const gates = m.data.gates;
-      const [gx, gy] = gates[m.data.gate];
-      if (g.player.inCar && near(g, gx, gy, 110)) {
-        m.data.gate++;
-        if (m.data.gate >= gates.length) completeMission(g);
-        else {
-          const [nx, ny] = gates[m.data.gate];
-          m.target = { x: nx, y: ny, label: `Gate ${m.data.gate + 1}/3` };
-        }
-      }
-      break;
-    }
-    case 10: {
-      const crates = m.data.crates;
-      const [cx, cy] = crates[m.data.crate];
-      if (near(g, cx, cy, 90)) {
-        m.data.crate++;
-        g.popup(`Crate ${m.data.crate}/3 secured`);
-        if (m.data.crate >= crates.length) completeMission(g);
-        else {
-          const [nx, ny] = crates[m.data.crate];
-          m.target = { x: nx, y: ny, label: `Crate ${m.data.crate + 1}/3` };
-        }
-      }
-      break;
-    }
-    case 11:
-      if (m.stage === 0) {
-        if (g.enemies.length && g.enemies.every((e) => !e.alive)) {
-          m.stage = 1;
-          m.target = { ...LANDMARKS.garage, label: "Escape — Rosa's Garage" };
-          say(g, 'Rosa', 'Vault clear! Get to my garage, now!');
-        }
-      } else if (near(g, LANDMARKS.garage.x, LANDMARKS.garage.y, 110)) {
-        completeMission(g);
-      }
-      break;
-    case 12:
-      if (g.enemies.length && g.enemies.every((e) => !e.alive)) completeMission(g);
-      break;
-    case 13: {
-      if (tickTimer(g, dt)) break;
-      const stops = m.data.stops;
-      const [sx, sy] = stops[m.data.stop];
-      if (near(g, sx, sy, 100)) {
-        m.data.stop++;
-        if (m.data.stop >= stops.length) completeMission(g);
-        else {
-          const [nx, ny] = stops[m.data.stop];
-          m.target = { x: nx, y: ny, label: `Stop ${m.data.stop + 1}/3 — ${Math.ceil(m.data.timer)}s` };
-        }
-      }
-      break;
-    }
-    case 14: {
-      // Sentry vision cones: detection rises inside a cone, falls outside.
+      if (pd <= 110) this.tailTime += dt;
+      if (this.tailTime > 15) this._advance();
+    } else if (s.kind === 'stealth') {
+      // Detection rises inside a sentry cone with line of sight.
       let seen = false;
-      for (const s of m.data.sentries) {
-        const d = dist(g.player.x, g.player.y, s.x, s.y);
-        if (d < SENTRY_RANGE) {
-          const a = Math.atan2(g.player.y - s.y, g.player.x - s.x);
-          if (Math.abs(angleDiff(s.angle, a)) < SENTRY_HALF_ANGLE) { seen = true; break; }
+      for (const e of this.sentries) {
+        const dd = dist2d(p.x, p.z, e.x, e.z);
+        if (dd < 120) {
+          const ang = Math.atan2(p.x - e.x, p.z - e.z);
+          let dh = ang - e.heading;
+          while (dh > Math.PI) dh -= Math.PI * 2;
+          while (dh < -Math.PI) dh += Math.PI * 2;
+          if (Math.abs(dh) < 0.7 && !this.ctx.world.pointInBuilding((p.x + e.x) / 2, (p.z + e.z) / 2)) seen = true;
         }
       }
-      if (seen) m.data.detection += DETECT_RATE * dt;
-      else m.data.detection = Math.max(0, m.data.detection - DETECT_FALL * dt);
-      if (m.data.detection >= 100) {
-        m.data.detection = 60;
-        addWanted(g, 2, 'spotted on the pier!');
-        g.popup('SPOTTED — the alarm is up!');
-      }
-      if (near(g, LANDMARKS.pier.x, LANDMARKS.pier.y, 80)) completeMission(g);
-      break;
+      this.detection = clamp(this.detection + (seen ? 45 : -18) * dt, 0, 100);
+      if (this.detection >= 100) { this.fail('Spotted on the pier!'); return; }
+      if (d(s.x, s.z) < s.r) this._advance();
     }
-    case 15:
-      if (m.stage === 0 && near(g, LANDMARKS.casino.x, LANDMARKS.casino.y, 90)) {
-        m.stage = 1;
-        g.money += 4000;
-        g.wanted = 4;
-        m.target = { ...LANDMARKS.airfield, label: 'Escape — Airfield' };
-        say(g, 'Madame Kestrel', '$4,000 in hand. Four stars on you — fly to the Airfield!');
-      } else if (m.stage === 1 && near(g, LANDMARKS.airfield.x, LANDMARKS.airfield.y, 110)) {
-        g.missionsDone = 15;
-        completeMission(g);
-      }
-      break;
   }
 }

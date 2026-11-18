@@ -1,32 +1,36 @@
-// NEON TIDE v5 — dossier builder. Copies game/ and screenshots/ into the
-// output directory, then writes dossier.json with the kit's buildDossier
-// (vendor/makefun-game.ts, unchanged). Deterministic: the same tree writes
-// the same dossier bytes every run.
-import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+// NEON TIDE v6 — the hand-in program (Node 22, standard library only).
+// The game itself is plain static files under game/ (index.html + ES
+// modules, three.js vendored as game/vendor/three.min.js, no network
+// request anywhere). This program copies game/ and screenshots/ beside it
+// into /output and writes /output/dossier.json with the vendored make.fun
+// library. Outside the grader, MAKEFUN_OUTPUT_DIR stands in for /output:
+//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// Serve it locally with `node serve.ts`, then open http://localhost:8080.
+
+import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const repo = dirname(fileURLToPath(import.meta.url));
+const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-if (!existsSync(join(repo, 'game', 'index.html'))) {
-  throw new Error('main.ts: game/index.html is missing — nothing to bundle');
-}
-if (!existsSync(join(repo, 'screenshots'))) {
-  throw new Error('main.ts: screenshots/ is missing — take the 4 shots first');
-}
-
-rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-cpSync(join(repo, 'game'), join(out, 'game'), { recursive: true });
-cpSync(join(repo, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
+mkdirSync(join(out, 'screenshots'), { recursive: true });
+if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
-const dossier = buildDossier(out, {
-  text_max_bytes: 163840,
-  screenshots: { max: 4, max_bytes: 262144 },
-  game_max_files: 993,
-  game_max_bytes: 50331648,
-});
-writeFileSync(join(out, 'dossier.json'), dossier);
-console.log(`dossier written: ${out}/dossier.json (${dossier.length} bytes)`);
+// The scorer's own caps: only text_max_bytes shapes the bytes; the others
+// refuse an entry the scorer would refuse (more than 4 screenshots or one
+// over 256 KiB; more than 993 files in game/ or 48 MiB of game files in all,
+// or a path under game/ over 1000 bytes).
+writeFileSync(
+  join(out, 'dossier.json'),
+  buildDossier(out, {
+    text_max_bytes: 163840,
+    screenshots: { max: 4, max_bytes: 262144 },
+    game_max_files: 993,
+    game_max_bytes: 50331648,
+    game_path_max_bytes: 1000,
+  }),
+);

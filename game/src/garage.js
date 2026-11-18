@@ -1,51 +1,72 @@
-// NEON TIDE v5 — Rosa's Garage: Engine / Grip Tires / Car Armor / NOS Kit,
-// levels 0-3. Bought with cash; buying a level also services the car
-// (full repair + NOS refill). Menu: ArrowUp/Down to pick, Enter to buy,
-// Escape to leave. The first thing the garage does on open is service.
-import { UPGRADES, NOS_TANK } from './config.js';
+// NEON TIDE v6 — Rosa's Garage upgrades + NOS, and the Ironworks Arms gun
+// shop. Upgrades apply to the player's current car (Engine / Grip / Armor /
+// NOS Kit, levels 0-3); NOS boosts top speed 1.45x while Shift is held and
+// drains 34/s. The garage also repairs and refills NOS.
+import { UPGRADES, NOS_DRAIN } from './config.js';
 
-export function openGarage(g) {
-  if (g.garageOpen) return;
-  g.garageOpen = true;
-  g.garageSel = 0;
-  g.mode = 'pause';
-  // Service: repair the player's car and refill the NOS tank.
-  if (g.player.car) g.player.car.cond = g.player.car.maxHp || 100;
-  if ((g.upgrades.nos || 0) > 0) g.nos = NOS_TANK;
-  g.popup("Rosa's Garage — serviced");
-}
-
-export function closeGarage(g) {
-  g.garageOpen = false;
-  g.mode = 'play';
-}
-
-export function garageKey(g, code) {
-  if (code === 'ArrowDown') g.garageSel = (g.garageSel + 1) % UPGRADES.length;
-  else if (code === 'ArrowUp') g.garageSel = (g.garageSel + UPGRADES.length - 1) % UPGRADES.length;
-  else if (code === 'Enter') buyUpgrade(g);
-  else if (code === 'Escape') closeGarage(g);
-}
-
-export function buyUpgrade(g) {
-  const item = UPGRADES[g.garageSel];
-  const lvl = g.upgrades[item.id] || 0;
-  if (lvl >= 3) { g.popup(`${item.label} is already MAX`); return false; }
-  const price = item.costs[lvl];
-  if (g.money < price) { g.popup(`Need $${price} for ${item.label} Lv${lvl + 1}`); return false; }
-  g.money -= price;
-  g.upgrades[item.id] = lvl + 1;
-  if (item.id === 'nos') {
-    g.nosMax = NOS_TANK;
-    g.nos = NOS_TANK;
+export class Garage {
+  constructor(state) {
+    this.state = state; // {money, upgrades, player}
   }
-  if (g.player.car) g.player.car.cond = 100;
-  g.popup(`${item.label} Lv${lvl + 1} installed — $${price}`);
-  g.audio.pickup();
-  return true;
+
+  price(kind) {
+    const lv = this.state.upgrades[kind];
+    if (lv >= 3) return null;
+    return UPGRADES[kind].prices[lv];
+  }
+
+  buy(kind) {
+    const lv = this.state.upgrades[kind];
+    if (lv >= 3) return false;
+    const cost = UPGRADES[kind].prices[lv];
+    if (this.state.money < cost) return false;
+    this.state.money -= cost;
+    this.state.upgrades[kind] = lv + 1;
+    this._applyToCar();
+    return true;
+  }
+
+  _applyToCar() {
+    const car = this.state.player.car;
+    if (!car) return;
+    car.upgrades = { ...this.state.upgrades };
+    car.nosMax = UPGRADES.nos.nosMax[this.state.upgrades.nos];
+    if (car.nos > car.nosMax) car.nos = car.nosMax;
+  }
+
+  // Called when the player enters any car: upgrades travel with the player.
+  applyToCar(car) {
+    car.upgrades = { ...this.state.upgrades };
+    car.nosMax = UPGRADES.nos.nosMax[this.state.upgrades.nos];
+    if (car.nos <= 0) car.nos = car.nosMax;
+  }
+
+  service() {
+    // Full repair + NOS refill for $150.
+    if (this.state.money < 150) return false;
+    this.state.money -= 150;
+    const car = this.state.player.car;
+    if (car) car.repair();
+    return true;
+  }
 }
 
-// Effective upgrade multipliers are computed in entities.carStats.
-export function upgradeSummary(g) {
-  return UPGRADES.map((u) => `${u.label} Lv${g.upgrades[u.id] || 0}`).join(' · ');
-}
+export const GUNSHOP = {
+  items: [
+    { id: 'smg', label: 'SMG', price: 800 },
+    { id: 'ammo-pistol', label: 'Pistol ammo x24', price: 120 },
+    { id: 'ammo-smg', label: 'SMG ammo x40', price: 200 },
+    { id: 'armor', label: 'Body armor (+50)', price: 350 },
+  ],
+  buy(state, combat, id) {
+    const item = this.items.find((i) => i.id === id);
+    if (!item || state.money < item.price) return false;
+    if (id === 'smg' && state.weapons.includes('smg')) return false;
+    state.money -= item.price;
+    if (id === 'smg') { state.weapons.push('smg'); combat.ammo.smg += 40; }
+    if (id === 'ammo-pistol') combat.ammo.pistol += 24;
+    if (id === 'ammo-smg') combat.ammo.smg += 40;
+    if (id === 'armor') state.player.armor = Math.min(100, state.player.armor + 50);
+    return true;
+  },
+};

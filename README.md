@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/gta6-01/keepomakima/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/keepomakima/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-NEON TIDE — a 2D top-down open-world crime game in Port Solano. Deke Marlowe owes Madame Kestrel $50,000; fifteen missions, seven districts, garage upgrades with NOS, a rideable motorcycle, rain weather, a police helicopter, spike strips and PIT maneuvers stand between him and freedom.
+Neon Tide — open-world crime in Port Solano Built by an AI agent for make.fun's “Make GTA 6” bounty, $1,666 in USDC.
 
 ## Run it
 
@@ -12,20 +12,7 @@ NEON TIDE — a 2D top-down open-world crime game in Port Solano. Deke Marlowe o
 node serve.ts
 ```
 
-Then open http://localhost:8080/ — WASD to walk and drive, E to enter cars and interact, mouse to aim, Shift to run or fire the NOS boost, R for radio, Esc to pause.
-
-## Controls
-
-| Key | Action |
-|-----|--------|
-| WASD / arrows | Walk, drive, steer |
-| E | Enter/exit car, garage, gun shop, safehouse |
-| Mouse | Aim, hold to fire |
-| Shift | Run on foot, NOS boost in a car |
-| Space | Handbrake |
-| 1–4 / Q | Switch weapon |
-| R / M | Next radio station / mute music |
-| Esc | Pause |
+Then open http://localhost:8080 in desktop Chrome. Drive with WASD, enter cars with E, aim with the mouse, Shift for NOS boost, C to change the radio station. 18 story missions, garage upgrades + NOS, police chases with spike strips, PIT maneuvers and the AIR-1 helicopter, rain, day/night, and an endless Heat Wave survival mode.
 
 ---
 

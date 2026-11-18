@@ -1,93 +1,73 @@
-// NEON TIDE v5 — config: every tunable number of the game in one place.
-// Port Solano is a 2400x1600 top-down city. All names, people and places
-// are original; nothing here comes from any commercial game.
-export const WORLD_W = 2400;
-export const WORLD_H = 1600;
-export const SAVE_KEY = 'neon-tide-v5-save';
-export const SEED_DEFAULT = 20261118;
-export const DEBT_TOTAL = 50000;
+// NEON TIDE v6 — config: world layout, districts, vehicles, weapons, economy.
+// Fresh for v6 (3D). All names, places and prices are original.
+export const SAVE_KEY = 'neon-tide-v6-save';
+export const SEED = 20261119;
+export const WORLD = { minX: -1100, maxX: 1100, minZ: -750, maxZ: 750 };
+export const ROAD_WIDTH = 26;
+export const ROADS_X = [-1000, -800, -600, -400, -200, 0, 200, 400, 600, 800, 1000];
+export const ROADS_Z = [-600, -400, -200, 0, 200, 400, 600];
 
-// Player on foot.
-export const WALK_SPEED = 230;
-export const RUN_SPEED = 350;
-export const PLAYER_HP = 100;
+// Districts: name, rect, building height range, palette note.
+export const DISTRICTS = [
+  { name: 'Downtown', x0: -200, z0: -200, x1: 400, z1: 200, hMin: 26, hMax: 70, neon: 0.4 },
+  { name: 'Harbor', x0: -1100, z0: -200, x1: -800, z1: 600, hMin: 6, hMax: 14, neon: 0.1 },
+  { name: 'Beachfront', x0: -1100, z0: 600, x1: 1100, z1: 750, hMin: 4, hMax: 12, neon: 0.3 },
+  { name: 'Old Town', x0: 600, z0: -600, x1: 1100, z1: -200, hMin: 8, hMax: 18, neon: 0.2 },
+  { name: 'Suburbs', x0: 600, z0: 200, x1: 1100, z1: 600, hMin: 5, hMax: 10, neon: 0.05 },
+  { name: 'Airfield', x0: -1100, z0: -750, x1: -600, z1: -400, hMin: 5, hMax: 12, neon: 0.1 },
+  { name: 'Neon Mile', x0: -200, z0: 200, x1: 400, z1: 400, hMin: 10, hMax: 26, neon: 1.0 },
+  { name: 'Marina', x0: -800, z0: 600, x1: -400, z1: 750, hMin: 4, hMax: 10, neon: 0.4 },
+];
 
-// Cars: top speed, acceleration, turn rate, hit points, seats.
-export const CAR_TYPES = {
-  sedan:   { label: 'Sedan',        top: 430, accel: 300, turn: 3.1, hp: 80,  color: '#5a7a9a' },
-  taxi:    { label: 'Taxi',         top: 440, accel: 310, turn: 3.3, hp: 80,  color: '#e8b820' },
-  sport:   { label: 'Sport',        top: 570, accel: 430, turn: 4.0, hp: 70,  color: '#c22a3a' },
-  truck:   { label: 'Truck',        top: 310, accel: 200, turn: 2.5, hp: 150, color: '#6a6a72' },
-  cruiser: { label: 'Police Cruiser', top: 530, accel: 390, turn: 3.8, hp: 90,  color: '#20242e' },
-  bike:    { label: 'Tide Runner 900', top: 600, accel: 520, turn: 4.4, hp: 55,  color: '#18b8a8' },
+export function districtAt(x, z) {
+  for (const d of DISTRICTS) if (x >= d.x0 && x <= d.x1 && z >= d.z0 && z <= d.z1) return d.name;
+  return 'Downtown';
+}
+
+// Vehicle types: top speed (units/s), accel, turn rate, hit points, colour.
+export const CARS = {
+  sedan: { top: 240, accel: 170, turn: 2.6, hp: 100, color: 0x3a6fd8, label: 'Sedan' },
+  taxi: { top: 230, accel: 180, turn: 2.7, hp: 90, color: 0xf2c200, label: 'Taxi' },
+  sport: { top: 330, accel: 260, turn: 3.1, hp: 80, color: 0xff3355, label: 'Sport' },
+  truck: { top: 190, accel: 120, turn: 2.0, hp: 180, color: 0x7a8a99, label: 'Truck' },
+  cruiser: { top: 300, accel: 240, turn: 3.0, hp: 120, color: 0x1a1a22, label: 'Cruiser' },
+  bike: { top: 360, accel: 300, turn: 3.6, hp: 55, color: 0x00e5ff, label: 'Tide Runner 900' },
 };
 
-// Weapons: damage per hit, shots per second, bullet speed, ammo start.
 export const WEAPONS = {
-  fists:   { label: 'Fists',   dmg: 25, rate: 2.2, speed: 0,    range: 46,  auto: false },
-  pistol:  { label: 'Pistol',  dmg: 34, rate: 5.0, speed: 900,  range: 520, auto: true },
-  smg:     { label: 'SMG',     dmg: 22, rate: 9.0, speed: 1000, range: 460, auto: true },
-  shotgun: { label: 'Shotgun', dmg: 13, rate: 1.3, speed: 820,  range: 300, auto: false, pellets: 5 },
+  fists: { damage: 12, rate: 0.45, range: 14, auto: false, ammo: Infinity, price: 0, label: 'Fists' },
+  pistol: { damage: 22, rate: 0.38, range: 220, auto: false, ammo: 12, price: 0, label: 'Pistol' },
+  smg: { damage: 13, rate: 0.09, range: 200, auto: true, ammo: 40, price: 800, label: 'SMG' },
 };
-export const WEAPON_ORDER = ['fists', 'pistol', 'smg', 'shotgun'];
 
-// Garage upgrades at Rosa's Garage: four items, levels 0-3.
-// Index order matters for the menu: Engine, Grip Tires, Car Armor, NOS Kit.
-export const UPGRADES = [
-  { id: 'engine', label: 'Engine',     costs: [800, 1500, 2500], desc: '+top speed, +accel' },
-  { id: 'grip',   label: 'Grip Tires', costs: [600, 1200, 2000], desc: '+turning, +braking' },
-  { id: 'armor',  label: 'Car Armor',  costs: [700, 1300, 2200], desc: '+car hit points' },
-  { id: 'nos',    label: 'NOS Kit',    costs: [1000, 1800, 2800], desc: 'Shift boost 1.45x' },
-];
-export const NOS_DRAIN = 34;      // tank units per second while boosting
-export const NOS_MULT = 1.45;     // top-speed multiplier while boosting
-export const NOS_TANK = 100;      // tank size once any NOS level is owned
+export const UPGRADES = {
+  engine: { label: 'Engine', prices: [600, 1200, 2400], topMul: [0, 0.12, 0.24, 0.38] },
+  grip: { label: 'Grip Tires', prices: [450, 900, 1800], turnMul: [0, 0.12, 0.24, 0.38] },
+  armor: { label: 'Car Armor', prices: [500, 1000, 2000], hpMul: [0, 0.25, 0.5, 0.85] },
+  nos: { label: 'NOS Kit', prices: [700, 1400, 2800], nosMax: [0, 100, 160, 240] },
+};
+export const NOS_BOOST = 1.45;
+export const NOS_DRAIN = 34;
 
-// Gun shop (Ironworks Arms) stock: first item is the SMG.
-export const SHOP_ITEMS = [
-  { id: 'smg',     label: 'SMG',          price: 1200, desc: 'Rapid fire, 9 shots/s' },
-  { id: 'shotgun', label: 'Shotgun',      price: 1500, desc: '5 pellets, close range' },
-  { id: 'ammo',    label: 'Ammo Box',     price: 200,  desc: '+120 ammo, all guns' },
-  { id: 'armor',   label: 'Body Armor',   price: 300,  desc: '+50 armor' },
-];
-
-// Wanted / police tuning.
-export const WANTED_MAX = 5;
-export const COP_FOOT_SPEED = 265;
-export const CRUISER_SPAWN_DIST = 700;
-export const SPIKE_MIN_WANTED = 4;
-export const PIT_MIN_WANTED = 3;
-
-// Enemy combat balance (fixed in v5b: vault guards must be survivable —
-// 5 guards at ~2 dmg per 1.6s is ~6 dps worst case, not the ~15 dps of v5).
-export const ENEMY_DMG = 2;
-export const ENEMY_FIRE_INTERVAL = 1.6;
-export const ENEMY_RANGE = 430;
-export const ENEMY_HP = 100;
-export const BOSS_HP = 320;
-
-// Mission timers (seconds): Harbor Run, Street Race, Midnight Run.
-export const MISSION_TIMERS = { m3: 120, m9: 150, m13: 90 };
-export const SENTRY_RANGE = 270;
-export const SENTRY_HALF_ANGLE = 0.61; // ~35 degrees each side
-export const DETECT_RATE = 20;         // meter per second inside a cone
-export const DETECT_FALL = 30;          // meter per second outside cones
-
-// Missions: title, reward, short brief. Order is the play order.
-export const MISSIONS = [
-  { title: 'Welcome Back',  reward: 500,  brief: 'Walk to the Kestrel Club and meet Madame Kestrel.' },
-  { title: 'Hot Wheels',    reward: 800,  brief: 'Steal a sport car and deliver it to Rosa\'s Garage.' },
-  { title: 'Harbor Run',    reward: 1200, brief: 'Drive the package to the Harbor before the timer runs out.' },
-  { title: 'Lose the Heat', reward: 1000, brief: 'Shake the 3-star wanted level. Stay out of sight.' },
-  { title: 'Street Fight',  reward: 1500, brief: 'Clear the rival gang off the corner at 5th & Main.' },
-  { title: 'Payback',       reward: 2000, brief: 'Hit the stash house, then bring the take to the garage.' },
-  { title: 'The Setup',     reward: 1800, brief: 'Tail the target. Stay close, but never too close.' },
-  { title: 'Side Hustle',   reward: 1600, brief: 'Drive the taxi. Three fares, three stops.' },
-  { title: 'Street Race',   reward: 2500, brief: 'Three gates across Port Solano. Fastest wins.' },
-  { title: 'Heist Prep',    reward: 2200, brief: 'Collect the three gear crates at the east docks.' },
-  { title: 'The Big One',   reward: 5000, brief: 'Storm the vault, drop the guards, escape to the garage.' },
-  { title: 'Tide Turns',    reward: 6000, brief: 'Boss Rook is waiting at the east yard. End this.' },
-  { title: 'Midnight Run',  reward: 3500, brief: 'Three-stop getaway chain. 90 seconds on the clock.' },
-  { title: 'Silent Pier',   reward: 3000, brief: 'Slip past the sentries. Reach the Pier Office unseen.' },
-  { title: 'Neon Mile',     reward: 8000, brief: 'Hit the casino, grab $4,000, escape to the Airfield.' },
-];
+export const ANCHORS = {
+  // All anchors sit on roads or the clear sidewalk strip beside them, never
+  // inside a building block — the collision solver pushes anything inside a
+  // block back out, so a target inside a block can never be reached.
+  start: { x: -14, z: 180 },
+  club: { x: 14, z: 40 },
+  garage: { x: 214, z: 300 },
+  gunshop: { x: -386, z: 200 },
+  safehouse1: { x: -14, z: 180 },
+  safehouse2: { x: 814, z: 420 },
+  sportM2: { x: 414, z: 60 },
+  harborDock: { x: -986, z: 300 },
+  gangCorner: { x: -600, z: 300 },
+  stashHouse: { x: -786, z: -120 },
+  vault: { x: -700, z: 620 },
+  casino: { x: 214, z: 320 },
+  airfield: { x: -850, z: -550 },
+  pier: { x: -960, z: 680 },
+  marina: { x: -600, z: 680 },
+  bossArena: { x: 950, z: -620 },
+  brokerYard: { x: 814, z: -480 },
+};

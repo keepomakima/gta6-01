@@ -1,83 +1,119 @@
-// NEON TIDE v5 — procedural WebAudio: three original radio stations plus
-// engine hum, siren, gunshots and pickups. Everything is synthesized; no
-// audio files, no network. AudioContext is created lazily on first user
-// gesture so headless boots never throw.
-const STATIONS = [
-  { name: 'TIDE FM — synthwave', bpm: 96,  scale: [0, 3, 5, 7, 10], base: 110, wave: 'sawtooth' },
-  { name: 'SOLANO SOUL — funk',  bpm: 112, scale: [0, 3, 5, 8, 10], base: 98,  wave: 'square' },
-  { name: 'PIER 9 — chill',      bpm: 76,  scale: [0, 2, 4, 7, 9],  base: 130, wave: 'triangle' },
-];
+// NEON TIDE v6 — procedural WebAudio: three radio stations (all original
+// loops, no samples) plus SFX (engine hum, siren, gunshot, pickup, mission
+// fanfare). Audio starts only after a user gesture; the playtest runs muted.
+export class AudioSys {
+  constructor() {
+    this.ctx = null;
+    this.station = 0; // 0 Neon FM, 1 Harbor Blues, 2 Solano Talk
+    this.stations = ['Neon FM', 'Harbor Blues', 'Solano Talk'];
+    this.radioOn = true;
+    this._radioTimer = null;
+    this._engineOsc = null;
+    this._engineGain = null;
+    this._sirenOsc = null;
+    this.muted = false;
+  }
 
-export function makeAudio() {
-  return {
-    ctx: null, station: 0, musicOn: true, nextNote: 0, step: 0,
-    engineOsc: null, engineGain: null, sirenOsc: null, sirenGain: null,
-    stationName() { return STATIONS[this.station].name; },
-    ensure() {
-      if (this.ctx) return true;
-      try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return false;
-        this.ctx = new AC();
-        return true;
-      } catch { return false; }
-    },
-    cycleStation() { this.station = (this.station + 1) % STATIONS.length; this.step = 0; },
-    // One quiet bass note per beat; called from the main loop.
-    tickMusic(now) {
-      if (!this.musicOn || !this.ctx) return;
-      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
-      if (this.ctx.state !== 'running') return;
-      const st = STATIONS[this.station];
-      if (now < this.nextNote) return;
-      const beat = 60 / st.bpm;
-      this.nextNote = now + beat;
-      const deg = st.scale[this.step % st.scale.length];
-      const f = st.base * Math.pow(2, deg / 12) * (this.step % 8 === 0 ? 0.5 : 1);
-      const o = this.ctx.createOscillator();
-      const gn = this.ctx.createGain();
-      o.type = st.wave; o.frequency.value = f;
-      gn.gain.setValueAtTime(0.05, this.ctx.currentTime);
-      gn.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + beat * 0.9);
-      o.connect(gn); gn.connect(this.ctx.destination);
-      o.start(); o.stop(this.ctx.currentTime + beat);
-      this.step++;
-    },
-    blip(freq, dur = 0.08, type = 'square', vol = 0.06) {
-      if (!this.ensure()) return;
-      try {
-        const o = this.ctx.createOscillator();
-        const gn = this.ctx.createGain();
-        o.type = type; o.frequency.value = freq;
-        gn.gain.setValueAtTime(vol, this.ctx.currentTime);
-        gn.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
-        o.connect(gn); gn.connect(this.ctx.destination);
-        o.start(); o.stop(this.ctx.currentTime + dur);
-      } catch { /* audio is cosmetic */ }
-    },
-    shot() { this.blip(180, 0.12, 'sawtooth', 0.09); },
-    pickup() { this.blip(660, 0.1, 'sine', 0.07); this.blip(880, 0.12, 'sine', 0.05); },
-    fanfare() { [523, 659, 784].forEach((f, i) => setTimeout(() => this.blip(f, 0.22, 'triangle', 0.08), i * 110)); },
-    crash() { this.blip(70, 0.2, 'sawtooth', 0.1); },
-    siren(on) {
-      if (!this.ensure()) return;
-      try {
-        if (on && !this.sirenOsc) {
-          this.sirenOsc = this.ctx.createOscillator();
-          this.sirenGain = this.ctx.createGain();
-          this.sirenOsc.type = 'sine';
-          this.sirenGain.gain.value = 0.015;
-          this.sirenOsc.connect(this.sirenGain);
-          this.sirenGain.connect(this.ctx.destination);
-          this.sirenOsc.start();
-        } else if (!on && this.sirenOsc) {
-          this.sirenOsc.stop();
-          this.sirenOsc = null; this.sirenGain = null;
-        }
-        if (this.sirenOsc) {
-          this.sirenOsc.frequency.value = 700 + Math.sin(performance.now() / 300) * 250;
-        }
-      } catch { /* cosmetic */ }
-    },
-  };
+  ensure() {
+    if (this.ctx) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this._startRadio();
+      this._startEngine();
+    } catch { this.ctx = null; }
+  }
+
+  _note(freq, t, dur, type = 'square', vol = 0.05) {
+    if (!this.ctx || this.muted) return;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g).connect(this.ctx.destination);
+    o.start(t); o.stop(t + dur);
+  }
+
+  _startRadio() {
+    // Simple step sequencer: 8th notes at 112 BPM, per-station scales.
+    const scales = [
+      [220, 261.6, 329.6, 392, 440, 523.3], // Neon FM: A minor arpeggio
+      [196, 233.1, 261.6, 293.7, 349.2, 392], // Harbor Blues
+      [330, 330, 0, 392, 0, 330], // Solano Talk: sparse blips
+    ];
+    let step = 0;
+    const tick = () => {
+      if (!this.ctx) return;
+      if (this.radioOn && !this.muted) {
+        const scale = scales[this.station];
+        const n = scale[step % scale.length];
+        if (n) this._note(n, this.ctx.currentTime, 0.22, this.station === 1 ? 'triangle' : 'square', 0.035);
+        if (step % 4 === 0) this._note(55, this.ctx.currentTime, 0.3, 'sine', 0.06);
+      }
+      step++;
+    };
+    this._radioTimer = setInterval(tick, 268);
+  }
+
+  _startEngine() {
+    if (!this.ctx) return;
+    this._engineOsc = this.ctx.createOscillator();
+    this._engineGain = this.ctx.createGain();
+    this._engineOsc.type = 'sawtooth';
+    this._engineOsc.frequency.value = 50;
+    this._engineGain.gain.value = 0;
+    this._engineOsc.connect(this._engineGain).connect(this.ctx.destination);
+    this._engineOsc.start();
+  }
+
+  setEngine(rpm01) {
+    if (!this._engineOsc || this.muted) return;
+    this._engineOsc.frequency.value = 45 + rpm01 * 160;
+    this._engineGain.gain.value = rpm01 * 0.03;
+  }
+
+  siren(on) {
+    if (!this.ctx) return;
+    if (on && !this._sirenOsc) {
+      this._sirenOsc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      g.gain.value = 0.02;
+      this._sirenOsc.type = 'sine';
+      this._sirenOsc.frequency.value = 700;
+      this._sirenOsc.connect(g).connect(this.ctx.destination);
+      this._sirenOsc.start();
+      this._sirenLfo = setInterval(() => {
+        if (this._sirenOsc) this._sirenOsc.frequency.value = this._sirenOsc.frequency.value > 800 ? 650 : 950;
+      }, 400);
+    } else if (!on && this._sirenOsc) {
+      clearInterval(this._sirenLfo);
+      this._sirenOsc.stop(); this._sirenOsc = null;
+    }
+  }
+
+  gunshot() {
+    if (!this.ctx || this.muted) return;
+    const dur = 0.12;
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * dur, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const g = this.ctx.createGain(); g.gain.value = 0.25;
+    src.connect(g).connect(this.ctx.destination);
+    src.start();
+  }
+
+  blip(freq = 880) { if (this.ctx && !this.muted) this._note(freq, this.ctx.currentTime, 0.12, 'sine', 0.08); }
+
+  fanfare() {
+    if (!this.ctx || this.muted) return;
+    const t0 = this.ctx.currentTime;
+    [523.3, 659.3, 784, 1046.5].forEach((f, i) => this._note(f, t0 + i * 0.12, 0.3, 'triangle', 0.09));
+  }
+
+  nextStation() {
+    this.station = (this.station + 1) % 3;
+    return this.stations[this.station];
+  }
 }
