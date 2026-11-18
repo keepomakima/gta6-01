@@ -1,390 +1,316 @@
-// NEON TIDE v5 — missions.js
-// 15 misi berurutan NEON TIDE (12 lama + 3 baru v5: Midnight Run, Silent
-// Pier, Neon Mile): marker, waypoint, dialog, timer, dan reward. Setiap misi
-// punya stage + progress 0..1 untuk HUD. Misi gagal bisa diulang; progres
-// tersimpan di localStorage. Ditulis fresh untuk v5.
-// Revisi v5.2: completeMission ambang 15 (bukan 12) — finale kini Neon Mile.
-import { MISSION_DEFS, PLACES } from './config.js';
-import { dist } from './random.js';
+// NEON TIDE v5 — all 15 missions. Each mission is a small state machine:
+// startMission sets the stage, updateMission advances it, completeMission
+// pays out and moves on. Timers fail and restart their mission; combat
+// missions are balanced to be winnable on foot (see ENEMY_DMG).
+import { MISSIONS, ENEMY_HP, BOSS_HP, MISSION_TIMERS, SENTRY_RANGE, SENTRY_HALF_ANGLE, DETECT_RATE, DETECT_FALL } from './config.js';
+import { LANDMARKS, SENTRY_POSTS } from './world.js';
 import { makeEnemy } from './entities.js';
-import { setWanted, raiseWanted } from './police.js';
-import { sentrySees } from './combat.js';
+import { dist, angleDiff } from './random.js';
+import { addWanted } from './police.js';
 
-const DIALOGS = {
-  1: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Deke. Lima puluh ribu dolar, dan kau pulang tanpa apa-apa. Kerja untukku — mulai sekarang.' },
-  2: { name: 'Rosa', role: 'Mekanik Garasi', text: 'Butuh mobil sport. Curi satu, antar ke garasiku. Jangan sampai penyok parah.' },
-  3: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Paket ini harus sampai Pier 9. Cepat — pembelinya tidak suka menunggu.' },
-  4: { name: 'Deke Marlowe', role: 'Protagonis', text: 'Tiga bintang. Aku harus hilang dari pandangan mereka. Jangan sampai terlihat.' },
-  5: { name: 'Rosa', role: 'Mekanik Garasi', text: 'Tide Rats menguasai sudut itu. Bersihkan mereka. Pistolmu sudah terisi.' },
-  6: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Rampok rumah simpan mereka. Ambil uangnya, kabur ke garasi Rosa.' },
-  7: { name: 'Kestrel', role: 'Bos Pelabuhan', text: 'Ikuti orang itu. Jangan terlalu dekat, jangan sampai dia sadar.' },
-  8: { name: 'Rosa', role: 'Mekanik Garasi', text: 'Taksi butuh sopir. Antar tiga penumpang, uangnya lumayan.' },
-  9: { name: 'Vex', role: 'Pembalap Liar', text: 'Balapan malam ini. Lewati tiga gate — yang paling cepat dapat hadiahnya.' },
-  10: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Heist butuh peralatan. Kumpulkan tiga crate di container yard.' },
-  11: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Malam ini kita rampok vault pelabuhan. Lumpuhkan penjaga, lalu kabur!' },
-  12: { name: 'Deke Marlowe', role: 'Protagonis', text: 'Rook. Semua ini berakhir malam ini. Di beach house-nya.' },
-  13: { name: 'Vex', role: 'Pembalap Liar', text: 'Getaway berantai: runway, kasino, lalu klub — 90 detik. NOS-mu penuh, kan?' },
-  14: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Pier Office dijaga sentri. Jangan masuk cone pandangan mereka. Diam-diam.' },
-  15: { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Casino Solano malam ini. Ambil uangnya, kabur ke airfield — heli pasti datang.' },
-};
+const near = (g, x, y, r) => dist(g.player.x, g.player.y, x, y) < r;
 
-// Checkpoint getaway misi 13: runway -> kasino -> klub.
-export const MIDNIGHT_STOPS = [
-  { x: 2015, y: 1120, label: 'Runway 27' },
-  { x: 1200, y: 1500, label: 'Casino Solano' },
-  { x: 620, y: 300, label: 'Kestrel Club' },
-];
-
-export function startMission(G, id) {
-  const def = MISSION_DEFS[id - 1];
-  if (!def) return;
-  const m = { id, title: def.title, giver: def.giver, reward: def.reward, stage: 0, data: {}, progress: 0, timer: 0 };
-  G.mission = m;
-  G.missionMarker = missionTarget(G);
-  G.dialog = { ...DIALOGS[id], t: 0 };
-  G.audio.sfx('mission');
-  setupMission(G, m);
+function say(g, name, text) {
+  g.dialog = { name, text, t: 5 };
+  g.popup(`${name}: ${text}`);
 }
 
-function setupMission(G, m) {
-  switch (m.id) {
-    case 3: m.timer = 75; break; // Harbor Run: 75 detik
-    case 4: setWanted(G, 3); spawnHeatCops(G); break; // Lose the Heat mulai 3★
-    case 5: spawnGang(G, PLACES.rivalCorner.x, PLACES.rivalCorner.y, 4); break;
-    case 6: m.data.stashTaken = false; break;
-    case 7: {
-      m.data.target = { x: PLACES.tailStart.x, y: PLACES.tailStart.y, angle: 0, speed: 70 };
-      m.data.followT = 0;
-      m.data.spotted = 0;
-      break;
-    }
-    case 8: m.data.fare = 0; m.data.fareStage = 'pickup'; break;
-    case 9: m.data.gate = 0; m.data.raceT = 0; break;
-    case 10: m.data.crates = [false, false, false]; break;
-    case 11: spawnGang(G, PLACES.vault.x, PLACES.vault.y, 5); raiseWanted(G, 2, 'heist terlihat'); break;
-    case 12: spawnBoss(G); raiseWanted(G, 1, 'Rook memanggil anak buahnya'); break;
-    case 13: m.timer = 90; m.data.stop = 0; break; // Midnight Run: 90 detik, 3 stop
-    case 14: spawnSentries(G); m.data.detect = 0; break; // Silent Pier
-    case 15: spawnGang(G, PLACES.casino.x, PLACES.casino.y, 3); m.data.grabbed = false; break;
-    default: break;
-  }
-}
-
-function spawnHeatCops(G) {
-  // Dua foot cop langsung mengejar saat misi 4 mulai.
-  const p = G.player;
-  for (let i = 0; i < 2; i += 1) {
-    const a = (i / 2) * Math.PI * 2;
-    G.police.push({ id: 900 + i, kind: 'cop', x: p.x + Math.cos(a) * 260, y: p.y + Math.sin(a) * 260, hp: 100, alive: true, speed: 170, angle: 0, fireT: 1.2, name: 'Officer Heat-' + (i + 1) });
-  }
-}
-
-export function spawnGang(G, x, y, n) {
-  G.enemies = [];
-  for (let i = 0; i < n; i += 1) {
-    const a = (i / n) * Math.PI * 2;
-    // Clamp ke dalam dunia: vault di tepi selatan, radius spawn tidak boleh
-    // melempar musuh keluar peta (bug M11 percobaan pertama v4).
-    const ex = Math.max(60, Math.min(2340, x + Math.cos(a) * 90));
-    const ey = Math.max(60, Math.min(1540, y + Math.sin(a) * 90));
-    G.enemies.push(makeEnemy(ex, ey, { label: 'Tide Rat' }));
-  }
-}
-
-function spawnBoss(G) {
-  G.enemies = [];
-  const b = PLACES.bossArena;
-  // Boss TIDAK spawn tepat di titik pemain (2380,1300) — offset 144px supaya
-  // tidak ada contact damage instan saat pemain teleport ke arena (bug M12).
-  G.enemies.push(makeEnemy(b.x - 120, b.y - 80, { hp: 300, boss: true, label: 'Boss Rook' }));
-  const gc = { x: 2300, y: 1380 };
-  for (let i = 0; i < 3; i += 1) {
-    const a = (i / 3) * Math.PI * 2;
-    const gx = Math.max(60, Math.min(2340, gc.x + Math.cos(a) * 110));
-    const gy = Math.max(60, Math.min(1540, gc.y + Math.sin(a) * 110));
-    G.enemies.push(makeEnemy(gx, gy, { label: 'Rook Guard' }));
-  }
-}
-
-// Sentry misi 14: 4 penjaga di sekitar Pier Office, cone pandang 260px.
-function spawnSentries(G) {
-  G.enemies = [];
-  const spots = [
-    { x: 500, y: 1440, faceA: Math.PI },
-    { x: 340, y: 1560, faceA: 0 },
-    { x: 520, y: 1560, faceA: -Math.PI / 2 },
-    { x: 420, y: 1400, faceA: Math.PI / 2 },
-  ];
-  for (const s of spots) {
-    G.enemies.push(makeEnemy(s.x, s.y, { sentry: true, faceA: s.faceA, coneR: 260, label: 'Sentry' }));
-  }
-}
-
-// Target waypoint misi saat ini (untuk marker + minimap + HUD NEXT).
-export function missionTarget(G) {
-  const m = G.mission;
-  if (!m) return null;
-  const P = PLACES;
-  switch (m.id) {
-    case 1: return { x: P.club.x, y: P.club.y, label: 'Kestrel Club' };
-    case 2: return m.stage === 0 ? { x: P.club.x, y: P.club.y, label: 'Curi mobil sport' } : { x: P.garage.x, y: P.garage.y, label: "Rosa's Garage" };
-    case 3: return { x: P.harborDrop.x, y: P.harborDrop.y, label: 'Harbor Pier 9' };
-    case 4: return { x: P.spawn.x, y: P.spawn.y, label: 'Hilang dari pandangan polisi' };
-    case 5: return { x: P.rivalCorner.x, y: P.rivalCorner.y, label: 'Rival Corner' };
-    case 6: return m.stage === 0 ? { x: P.stashHouse.x, y: P.stashHouse.y, label: 'Stash House' } : { x: P.garage.x, y: P.garage.y, label: "Rosa's Garage" };
-    case 7: return m.data.target ? { x: m.data.target.x, y: m.data.target.y, label: 'Ikuti target' } : null;
-    case 8: {
-      const fares = [P.fareA, P.fareB, P.fareC];
-      const f = fares[Math.min(m.data.fare || 0, 2)];
-      return { x: f.x, y: f.y, label: (m.data.fareStage === 'pickup' ? 'Jemput' : 'Antar') + ' — ' + f.label };
-    }
-    case 9: return { x: P.raceGates[Math.min(m.data.gate || 0, 2)].x, y: P.raceGates[Math.min(m.data.gate || 0, 2)].y, label: 'Gate ' + ((m.data.gate || 0) + 1) + '/3' };
-    case 10: {
-      const idx = (m.data.crates || []).findIndex((c) => !c);
-      if (idx < 0) return { x: P.garage.x, y: P.garage.y, label: "Rosa's Garage" };
-      return { x: P.crateSpots[idx].x, y: P.crateSpots[idx].y, label: 'Crate ' + (idx + 1) + '/3' };
-    }
-    case 11: return m.stage === 0 ? { x: P.vault.x, y: P.vault.y, label: 'Harbor Vault' } : { x: P.garage.x, y: P.garage.y, label: 'Kabur ke garasi!' };
-    case 12: return { x: P.bossArena.x, y: P.bossArena.y, label: "Rook's Beach House" };
-    case 13: {
-      const s = MIDNIGHT_STOPS[Math.min(m.data.stop || 0, 2)];
-      return { x: s.x, y: s.y, label: 'Stop ' + ((m.data.stop || 0) + 1) + '/3 — ' + s.label };
-    }
-    case 14: return { x: P.pierOffice.x, y: P.pierOffice.y, label: 'Pier Office (stealth)' };
-    case 15: return m.stage === 0 ? { x: P.casino.x, y: P.casino.y, label: 'Casino Solano — ambil uang' } : { x: P.airfield.x, y: P.airfield.y, label: 'Kabur ke Airfield!' };
-    default: return null;
-  }
-}
-
-// Teks stage untuk HUD mission card.
-export function missionStageText(G) {
-  const m = G.mission;
-  if (!m) return 'Free roam — jelajahi Port Solano';
-  switch (m.id) {
-    case 1: return 'Jalan kaki ke Kestrel Club';
-    case 2: return m.stage === 0 ? 'Curi mobil sport (E di dekat mobil)' : 'Antar ke garasi Rosa';
-    case 3: return 'Antar paket ke Pier 9 — ' + Math.ceil(m.timer) + ' dtk tersisa';
-    case 4: return 'Wanted ' + G.wantedLevel + '★ — hilang dari pandangan polisi';
-    case 5: return 'Kalahkan geng: ' + G.enemies.filter((e) => e.alive).length + ' tersisa';
-    case 6: return m.stage === 0 ? 'Masuk ke stash house rival' : 'Kabur ke garasi Rosa';
-    case 7: return 'Ikuti target — jangan ketahuan (' + Math.floor(m.data.followT || 0) + '/25 dtk)';
-    case 8: return 'Penumpang ' + ((m.data.fare || 0) + 1) + '/3 — ' + (m.data.fareStage === 'pickup' ? 'jemput penumpang' : 'antar ke tujuan');
-    case 9: return 'Gate ' + ((m.data.gate || 0) + 1) + '/3 — ' + Math.floor(m.data.raceT || 0) + ' dtk';
-    case 10: return 'Crate: ' + (m.data.crates || []).filter(Boolean).length + '/3 dikumpulkan';
-    case 11: return m.stage === 0 ? 'Lumpuhkan penjaga vault: ' + G.enemies.filter((e) => e.alive).length + ' tersisa' : 'Kabur ke garasi Rosa!';
-    case 12: return 'Kalahkan Boss Rook: ' + G.enemies.filter((e) => e.alive).length + ' musuh tersisa';
-    case 13: return 'Stop ' + ((m.data.stop || 0) + 1) + '/3 — ' + Math.ceil(m.timer) + ' dtk tersisa';
-    case 14: return 'Stealth: deteksi ' + Math.floor(m.data.detect || 0) + '% — hindari cone kuning';
-    case 15: return m.stage === 0 ? 'Ambil uang kasino — hati-hati penjaga' : 'Kabur ke Airfield! Wanted ' + G.wantedLevel + '★';
-    default: return '';
-  }
-}
-
-// Update misi aktif. Return true bila misi selesai frame ini.
-export function updateMission(G, dt) {
-  const m = G.mission;
-  if (!m) return false;
-  const p = G.player;
-  const near = (x, y, r) => dist(p.x, p.y, x, y) < r;
-  switch (m.id) {
+export function startMission(g, n) {
+  const m = g.mission;
+  m.idx = n; m.stage = 0; m.data = {}; m.target = null; m.done = false;
+  const def = MISSIONS[n - 1];
+  g.popup(`MISSION ${n}/15 — ${def.title}`);
+  switch (n) {
     case 1:
-      m.progress = 1 - Math.min(1, dist(p.x, p.y, PLACES.club.x, PLACES.club.y) / 600);
-      if (near(PLACES.club.x, PLACES.club.y, 70)) return completeMission(G, m);
+      m.target = { ...LANDMARKS.club, label: 'Kestrel Club' };
+      say(g, 'Madame Kestrel', 'Deke. You owe me $50,000. Walk to my club — now.');
       break;
-    case 2: {
-      if (m.stage === 0 && p.inCar && p.inCar.type === 'sport') { m.stage = 1; G.dialog = { name: 'Rosa', role: 'Mekanik Garasi', text: 'Itu dia! Sekarang antar ke garasiku.', t: 0 }; }
-      m.progress = m.stage === 0 ? 0.3 : 0.7;
-      if (m.stage === 1 && p.inCar && near(PLACES.garage.x, PLACES.garage.y, 130)) return completeMission(G, m);
+    case 2:
+      m.target = { ...LANDMARKS.garage, label: "Rosa's Garage" };
+      say(g, 'Madame Kestrel', 'Steal a sport car. Bring it to Rosa\'s Garage.');
       break;
-    }
-    case 3: {
-      m.timer -= dt;
-      m.progress = 1 - m.timer / 75;
-      if (near(PLACES.harborDrop.x, PLACES.harborDrop.y, 130)) return completeMission(G, m);
-      if (m.timer <= 0) { failMission(G, m, 'Timer habis — paket terlambat.'); return false; }
+    case 3:
+      m.data.timer = MISSION_TIMERS.m3;
+      m.target = { ...LANDMARKS.harbor, label: 'Harbor Docks' };
+      say(g, 'Madame Kestrel', 'Package to the Harbor. 120 seconds. Don\'t dawdle.');
       break;
-    }
-    case 4: {
-      m.progress = 1 - G.wantedLevel / 3;
-      if (G.wantedLevel === 0) return completeMission(G, m);
+    case 4:
+      m.target = { x: 1200, y: 500, label: 'Lose the cops' };
+      addWanted(g, 3, 'the heat is on');
+      say(g, 'Rosa', 'Three stars, Deke. Break line of sight until it cools off.');
       break;
-    }
     case 5: {
-      const left = G.enemies.filter((e) => e.alive).length;
-      m.progress = 1 - left / 4;
-      if (left === 0) return completeMission(G, m);
+      m.target = { ...LANDMARKS.gangCorner, label: '5th & Main' };
+      // Gang holds the open plaza south of the corner — clear ground, no
+      // building edges between the player and the shooters.
+      const spots = [[950, 1030], [1070, 1050], [1000, 1100], [930, 1080]];
+      g.enemies = spots.map(([x, y]) => makeEnemy(x, y, { hp: ENEMY_HP }));
+      say(g, 'Madame Kestrel', 'Rival gang owns 5th & Main. Clear the corner.');
       break;
     }
-    case 6: {
-      if (m.stage === 0 && near(PLACES.stashHouse.x, PLACES.stashHouse.y, 110)) {
-        m.stage = 1; p.money += 1500;
-        G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Dapat $1.500 dari brankas mereka. Kabur sekarang!', t: 0 };
-        raiseWanted(G, 2, 'perampokan terlihat');
-      }
-      m.progress = m.stage === 0 ? 0.4 : 0.75;
-      if (m.stage === 1 && near(PLACES.garage.x, PLACES.garage.y, 130)) return completeMission(G, m);
+    case 6:
+      m.target = { ...LANDMARKS.stash, label: 'Stash House' };
+      say(g, 'Rosa', 'Hit the stash house, then bring the take to my garage.');
       break;
-    }
     case 7: {
-      const t = m.data.target;
-      if (t) {
-        // Target berjalan di jalan, belok-belok pelan.
-        t.angle += (Math.sin(G.time * 0.3) * 0.4) * dt;
-        t.x += Math.cos(t.angle) * t.speed * dt;
-        t.y += Math.sin(t.angle) * t.speed * dt;
-        if (t.x < 100) t.angle = 0; if (t.x > 2300) t.angle = Math.PI;
-        if (t.y < 100) t.angle = Math.PI / 2; if (t.y > 1500) t.angle = -Math.PI / 2;
-        const d = dist(p.x, p.y, t.x, t.y);
-        if (d < 340 && d > 55) m.data.followT += dt; // terlalu dekat = ketahuan
-        if (d <= 55) {
-          m.data.spotted += dt;
-          if (m.data.spotted > 1.2) { failMission(G, m, 'Ketahuan! Target kabur.'); return false; }
-        } else m.data.spotted = Math.max(0, (m.data.spotted || 0) - dt);
-        m.progress = Math.min(1, (m.data.followT || 0) / 25);
-        // Cek selesai DI LUAR blok jarak (pelajaran bug v2): dari jauh pun selesai.
-        if ((m.data.followT || 0) >= 25) return completeMission(G, m);
-      }
+      m.data.followT = 0;
+      m.data.target = { x: 1500, y: 500, tx: 1500, ty: 500, angle: 0 };
+      m.data.wps = [[1500, 500], [1500, 1100], [900, 1100], [900, 500]];
+      m.data.wp = 0;
+      m.target = { x: 1500, y: 500, label: 'Tail the target' };
+      say(g, 'Madame Kestrel', 'Follow him. Close enough to see, far enough to stay invisible.');
       break;
     }
-    case 8: {
-      const fares = [PLACES.fareA, PLACES.fareB, PLACES.fareC];
-      const starts = [PLACES.taxiStand, PLACES.fareA, PLACES.fareB];
-      const idx = Math.min(m.data.fare || 0, 2);
-      const inTaxi = p.inCar && p.inCar.type === 'taxi';
-      if (m.data.fareStage === 'pickup' && inTaxi && near(starts[idx].x, starts[idx].y, 130)) {
-        m.data.fareStage = 'dropoff';
-        G.dialog = { name: 'Penumpang', role: 'Taksi', text: 'Tolong antar saya ke ' + fares[idx].label + '.', t: 0 };
-      } else if (m.data.fareStage === 'dropoff' && inTaxi && near(fares[idx].x, fares[idx].y, 130)) {
-        p.money += 300;
-        m.data.fare = (m.data.fare || 0) + 1;
-        m.data.fareStage = 'pickup';
-        G.audio.sfx('pickup');
-        if (m.data.fare >= 3) return completeMission(G, m);
-        G.dialog = { name: 'Rosa', role: 'Mekanik Garasi', text: 'Penumpang ' + m.data.fare + '/3 selesai. Lanjut!', t: 0 };
-      }
-      m.progress = ((m.data.fare || 0) + (m.data.fareStage === 'dropoff' ? 0.5 : 0)) / 3;
+    case 8:
+      m.data.fares = [[1820, 420], [620, 820], [420, 1120]];
+      m.data.fare = 0;
+      m.target = { x: 1820, y: 420, label: 'Fare 1/3' };
+      say(g, 'Rosa', 'Drive the taxi. Three fares. The meter is running.');
       break;
-    }
-    case 9: {
-      m.data.raceT += dt;
-      const g = PLACES.raceGates[Math.min(m.data.gate || 0, 2)];
-      if (near(g.x, g.y, 140)) {
-        m.data.gate = (m.data.gate || 0) + 1;
-        G.audio.sfx('pickup');
-        if (m.data.gate >= 3) return completeMission(G, m);
-      }
-      m.progress = (m.data.gate || 0) / 3;
+    case 9:
+      m.data.timer = MISSION_TIMERS.m9;
+      m.data.gates = [[2220, 220], [2220, 1420], [620, 1420]];
+      m.data.gate = 0;
+      m.target = { x: 2220, y: 220, label: 'Gate 1/3' };
+      say(g, 'Rosa', 'Three gates, one winner. Go!');
       break;
-    }
-    case 10: {
-      PLACES.crateSpots.forEach((c, i) => {
-        if (!m.data.crates[i] && near(c.x, c.y, 120)) {
-          m.data.crates[i] = true;
-          G.audio.sfx('pickup');
-          G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Crate ' + (m.data.crates.filter(Boolean).length) + '/3 didapat.', t: 0 };
-        }
-      });
-      m.progress = (m.data.crates || []).filter(Boolean).length / 3;
-      if ((m.data.crates || []).every(Boolean)) return completeMission(G, m);
+    case 10:
+      m.data.crates = [[1780, 1380], [1900, 1460], [1840, 1560]];
+      m.data.crate = 0;
+      m.target = { x: 1780, y: 1380, label: 'Crate 1/3' };
+      say(g, 'Madame Kestrel', 'Three gear crates at the east docks. Collect them all.');
       break;
-    }
     case 11: {
-      if (m.stage === 0) {
-        const left = G.enemies.filter((e) => e.alive).length;
-        m.progress = 0.5 * (1 - left / 5);
-        if (left === 0) {
-          m.stage = 1; p.money += 3000;
-          G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Vault kosong! Bawa uangnya ke garasi Rosa — cepat!', t: 0 };
-        }
-      } else {
-        m.progress = 0.5 + 0.5 * (1 - Math.min(1, dist(p.x, p.y, PLACES.garage.x, PLACES.garage.y) / 1200));
-        if (near(PLACES.garage.x, PLACES.garage.y, 130)) return completeMission(G, m);
-      }
+      m.target = { ...LANDMARKS.vault, label: 'Rival Vault' };
+      const spots = [[280, 1500], [380, 1520], [260, 1580], [400, 1580], [320, 1470]];
+      g.enemies = spots.map(([x, y]) => makeEnemy(x, y, { hp: ENEMY_HP, guard: true }));
+      say(g, 'Madame Kestrel', 'The vault. Five guards. Drop them, then run to the garage.');
       break;
     }
     case 12: {
-      const left = G.enemies.filter((e) => e.alive).length;
-      m.progress = 1 - left / 4;
-      if (left === 0) return completeMission(G, m);
+      m.target = { ...LANDMARKS.bossYard, label: 'East Yard' };
+      // Boss and guards hold open ground east of the sheds — nobody spawns
+      // inside a building or exactly on top of the player's arrival point.
+      const boss = makeEnemy(2340, 1260, { hp: BOSS_HP, boss: true });
+      const guards = [[2340, 1240], [2300, 1340], [2380, 1360]].map(([x, y]) => makeEnemy(x, y, { hp: ENEMY_HP, guard: true }));
+      g.enemies = [boss, ...guards];
+      say(g, 'Boss Rook', 'So the rat came home. Boys — kill him.');
       break;
     }
-    case 13: {
-      // Midnight Run: 3 stop berantai, timer 90 detik, NOS dianjurkan.
-      m.timer -= dt;
-      m.progress = (m.data.stop || 0) / 3 + (1 - Math.max(0, m.timer) / 90) * 0.1;
-      const s = MIDNIGHT_STOPS[Math.min(m.data.stop || 0, 2)];
-      if (near(s.x, s.y, 140)) {
-        m.data.stop = (m.data.stop || 0) + 1;
-        G.audio.sfx('pickup');
-        p.money += 200;
-        if (m.data.stop >= 3) return completeMission(G, m);
-        G.dialog = { name: 'Vex', role: 'Pembalap Liar', text: 'Stop ' + m.data.stop + '/3! Lanjut ke ' + MIDNIGHT_STOPS[m.data.stop].label + '!', t: 0 };
-      }
-      if (m.timer <= 0) { failMission(G, m, 'Timer habis — getaway gagal.'); return false; }
+    case 13:
+      m.data.timer = MISSION_TIMERS.m13;
+      m.data.stops = [[2015, 1120], [1200, 1500], [620, 300]];
+      m.data.stop = 0;
+      m.target = { x: 2015, y: 1120, label: 'Stop 1/3 — 90s' };
+      say(g, 'Rosa', 'Midnight Run: three stops, ninety seconds. Drive like the tide.');
       break;
-    }
     case 14: {
-      // Silent Pier: deteksi naik saat terlihat sentry, turun saat sembunyi.
-      let seen = false;
-      for (const e of G.enemies) {
-        if (e.alive && e.sentry && sentrySees(e, p.x, p.y)) { seen = true; break; }
-      }
-      if (seen) {
-        m.data.detect = Math.min(100, (m.data.detect || 0) + dt * 34);
-        if (m.data.detect >= 100) { failMission(G, m, 'Ketahuan sentri! Infiltrasi gagal.'); return false; }
-      } else {
-        m.data.detect = Math.max(0, (m.data.detect || 0) - dt * 18);
-      }
-      m.progress = 1 - Math.min(1, dist(p.x, p.y, PLACES.pierOffice.x, PLACES.pierOffice.y) / 1200);
-      if (near(PLACES.pierOffice.x, PLACES.pierOffice.y, 70)) return completeMission(G, m);
+      m.data.detection = 0;
+      m.data.sentries = SENTRY_POSTS.map((s) => ({ ...s }));
+      m.target = { ...LANDMARKS.pier, label: 'Pier Office' };
+      say(g, 'Madame Kestrel', 'Silent Pier. Sentries watch the docks — stay out of their cones.');
       break;
     }
-    case 15: {
-      // Neon Mile: ambil uang kasino (stage 0), lalu kabur ke airfield (stage 1).
-      if (m.stage === 0) {
-        m.progress = 0.4 * (1 - Math.min(1, dist(p.x, p.y, PLACES.casino.x, PLACES.casino.y) / 1200));
-        if (near(PLACES.casino.x, PLACES.casino.y, 110)) {
-          m.stage = 1; p.money += 4000;
-          setWanted(G, 4);
-          G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Uang kasino didapat! Kabur ke airfield — heli sudah di udara!', t: 0 };
-        }
-      } else {
-        m.progress = 0.4 + 0.6 * (1 - Math.min(1, dist(p.x, p.y, PLACES.airfield.x, PLACES.airfield.y) / 1600));
-        if (near(PLACES.airfield.x, PLACES.airfield.y, 140)) return completeMission(G, m);
-      }
+    case 15:
+      m.target = { ...LANDMARKS.casino, label: 'Neon Mile Casino' };
+      say(g, 'Madame Kestrel', 'The Neon Mile casino. Take the $4,000, then vanish to the Airfield.');
       break;
-    }
-    default: break;
   }
-  G.missionMarker = missionTarget(G);
+}
+
+export function completeMission(g) {
+  const n = g.mission.idx;
+  const def = MISSIONS[n - 1];
+  g.money += def.reward;
+  g.missionsDone = Math.max(g.missionsDone, n);
+  g.popup(`MISSION COMPLETE — ${def.title} +$${def.reward}`);
+  g.audio.fanfare();
+  g.save();
+  if (n >= 15) {
+    // The finale pays once and stays done: free-roam after the ending
+    // must not re-trigger the escape (and re-pay) on every airfield visit.
+    g.mission.done = true;
+    g.mode = 'complete';
+    g.save();
+    return;
+  }
+  startMission(g, n + 1);
+}
+
+export function failMission(g, why) {
+  g.popup(`MISSION FAILED — ${why}. Try again.`);
+  startMission(g, g.mission.idx);
+}
+
+function tickTimer(g, dt) {
+  const m = g.mission;
+  if (m.data.timer === undefined) return false;
+  m.data.timer -= dt;
+  if (m.data.timer <= 0) { failMission(g, 'time ran out'); return true; }
   return false;
 }
 
-export function completeMission(G, m) {
-  const p = G.player;
-  p.money += m.reward;
-  p.respect = Math.min(100, p.respect + 8);
-  G.missionsDone += 1;
-  G.audio.sfx('fanfare');
-  G.popups.push({ text: 'MISSION COMPLETE +$' + m.reward, amount: 0, t: 0, x: p.x, y: p.y - 40 });
-  const done = m.id;
-  G.mission = null;
-  G.missionMarker = null;
-  G.saveGame();
-  if (done >= 15) {
-    G.mode = 'complete';
-    G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Kasino dirampok, Rook tumbang, utang lunas. Port Solano milik kita, Deke.', t: 0 };
-    return true;
+export function updateMissions(g, dt) {
+  if (g.mode !== 'play' || g.mission.done) return;
+  const m = g.mission;
+  const n = m.idx;
+  switch (n) {
+    case 1:
+      if (near(g, LANDMARKS.club.x, LANDMARKS.club.y, 90)) completeMission(g);
+      break;
+    case 2:
+      // Deliver the car: arrive at the garage and bring it to a stop.
+      // (A fast drive-by down the road does not count as a delivery.)
+      if (g.player.inCar && g.player.car && Math.abs(g.player.car.speed) < 120
+        && near(g, LANDMARKS.garage.x, LANDMARKS.garage.y, 110)) completeMission(g);
+      break;
+    case 3:
+      if (tickTimer(g, dt)) break;
+      if (g.player.inCar && g.player.car && Math.abs(g.player.car.speed) < 120
+        && near(g, LANDMARKS.harbor.x, LANDMARKS.harbor.y, 110)) completeMission(g);
+      break;
+    case 4:
+      if (g.wanted <= 0) completeMission(g);
+      break;
+    case 5:
+      if (g.enemies.length && g.enemies.every((e) => !e.alive)) completeMission(g);
+      break;
+    case 6:
+      if (m.stage === 0 && near(g, LANDMARKS.stash.x, LANDMARKS.stash.y, 100)) {
+        m.stage = 1;
+        m.target = { ...LANDMARKS.garage, label: "Rosa's Garage" };
+        g.money += 1500;
+        addWanted(g, 2, 'the stash alarm');
+        say(g, 'Rosa', 'Got it. Now bring it home — the alarm is up!');
+      } else if (m.stage === 1 && near(g, LANDMARKS.garage.x, LANDMARKS.garage.y, 110)) {
+        completeMission(g);
+      }
+      break;
+    case 7: {
+      const t = m.data.target;
+      const wps = m.data.wps;
+      const [wx, wy] = wps[m.data.wp];
+      const d = dist(t.x, t.y, wx, wy);
+      if (d < 20) m.data.wp = (m.data.wp + 1) % wps.length;
+      else {
+        const a = Math.atan2(wy - t.y, wx - t.x);
+        t.angle = a;
+        t.x += Math.cos(a) * 85 * dt;
+        t.y += Math.sin(a) * 85 * dt;
+      }
+      m.target = { x: t.x, y: t.y, label: 'Tail the target' };
+      const pd = dist(g.player.x, g.player.y, t.x, t.y);
+      if (pd < 60) {
+        m.data.followT = Math.max(0, m.data.followT - dt * 2);
+        g.popup('TOO CLOSE — back off!');
+      } else if (pd < 320) {
+        m.data.followT += dt;
+      }
+      if (m.data.followT >= 25) completeMission(g);
+      break;
+    }
+    case 8: {
+      const fares = m.data.fares;
+      const [fx, fy] = fares[m.data.fare];
+      if (g.player.inCar && g.player.car && g.player.car.type === 'taxi' && near(g, fx, fy, 100)) {
+        g.money += 400;
+        g.popup(`Fare ${m.data.fare + 1}/3 — +$400`);
+        m.data.fare++;
+        if (m.data.fare >= fares.length) completeMission(g);
+        else {
+          const [nx, ny] = fares[m.data.fare];
+          m.target = { x: nx, y: ny, label: `Fare ${m.data.fare + 1}/3` };
+        }
+      }
+      break;
+    }
+    case 9: {
+      if (tickTimer(g, dt)) break;
+      const gates = m.data.gates;
+      const [gx, gy] = gates[m.data.gate];
+      if (g.player.inCar && near(g, gx, gy, 110)) {
+        m.data.gate++;
+        if (m.data.gate >= gates.length) completeMission(g);
+        else {
+          const [nx, ny] = gates[m.data.gate];
+          m.target = { x: nx, y: ny, label: `Gate ${m.data.gate + 1}/3` };
+        }
+      }
+      break;
+    }
+    case 10: {
+      const crates = m.data.crates;
+      const [cx, cy] = crates[m.data.crate];
+      if (near(g, cx, cy, 90)) {
+        m.data.crate++;
+        g.popup(`Crate ${m.data.crate}/3 secured`);
+        if (m.data.crate >= crates.length) completeMission(g);
+        else {
+          const [nx, ny] = crates[m.data.crate];
+          m.target = { x: nx, y: ny, label: `Crate ${m.data.crate + 1}/3` };
+        }
+      }
+      break;
+    }
+    case 11:
+      if (m.stage === 0) {
+        if (g.enemies.length && g.enemies.every((e) => !e.alive)) {
+          m.stage = 1;
+          m.target = { ...LANDMARKS.garage, label: "Escape — Rosa's Garage" };
+          say(g, 'Rosa', 'Vault clear! Get to my garage, now!');
+        }
+      } else if (near(g, LANDMARKS.garage.x, LANDMARKS.garage.y, 110)) {
+        completeMission(g);
+      }
+      break;
+    case 12:
+      if (g.enemies.length && g.enemies.every((e) => !e.alive)) completeMission(g);
+      break;
+    case 13: {
+      if (tickTimer(g, dt)) break;
+      const stops = m.data.stops;
+      const [sx, sy] = stops[m.data.stop];
+      if (near(g, sx, sy, 100)) {
+        m.data.stop++;
+        if (m.data.stop >= stops.length) completeMission(g);
+        else {
+          const [nx, ny] = stops[m.data.stop];
+          m.target = { x: nx, y: ny, label: `Stop ${m.data.stop + 1}/3 — ${Math.ceil(m.data.timer)}s` };
+        }
+      }
+      break;
+    }
+    case 14: {
+      // Sentry vision cones: detection rises inside a cone, falls outside.
+      let seen = false;
+      for (const s of m.data.sentries) {
+        const d = dist(g.player.x, g.player.y, s.x, s.y);
+        if (d < SENTRY_RANGE) {
+          const a = Math.atan2(g.player.y - s.y, g.player.x - s.x);
+          if (Math.abs(angleDiff(s.angle, a)) < SENTRY_HALF_ANGLE) { seen = true; break; }
+        }
+      }
+      if (seen) m.data.detection += DETECT_RATE * dt;
+      else m.data.detection = Math.max(0, m.data.detection - DETECT_FALL * dt);
+      if (m.data.detection >= 100) {
+        m.data.detection = 60;
+        addWanted(g, 2, 'spotted on the pier!');
+        g.popup('SPOTTED — the alarm is up!');
+      }
+      if (near(g, LANDMARKS.pier.x, LANDMARKS.pier.y, 80)) completeMission(g);
+      break;
+    }
+    case 15:
+      if (m.stage === 0 && near(g, LANDMARKS.casino.x, LANDMARKS.casino.y, 90)) {
+        m.stage = 1;
+        g.money += 4000;
+        g.wanted = 4;
+        m.target = { ...LANDMARKS.airfield, label: 'Escape — Airfield' };
+        say(g, 'Madame Kestrel', '$4,000 in hand. Four stars on you — fly to the Airfield!');
+      } else if (m.stage === 1 && near(g, LANDMARKS.airfield.x, LANDMARKS.airfield.y, 110)) {
+        g.missionsDone = 15;
+        completeMission(g);
+      }
+      break;
   }
-  G.dialog = { name: 'Madame Kestrel', role: 'Bos Pelabuhan', text: 'Misi ' + done + ' selesai. Hadiah $' + m.reward + '. Misi berikutnya sudah menunggumu.', t: 0 };
-  startMission(G, done + 1);
-  return true;
-}
-
-function failMission(G, m, reason) {
-  G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: reason + ' Coba lagi.', t: 0 };
-  G.audio.sfx('fail');
-  // Ulang misi yang sama dari awal.
-  G.enemies = [];
-  startMission(G, m.id);
 }

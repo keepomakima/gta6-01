@@ -1,67 +1,24 @@
-// NEON TIDE v5 — helicopter.js
-// Helikopter polisi AIR-1: muncul di wanted 4-5, mengunci pemain dengan
-// spotlight cone, rotor wash (partikel + goyangan kamera), dan memperlambat
-// penurunan wanted selama sorotan menempel. Di hujan, spotlight lebih lebar
-// dan lebih dramatis. Ditulis fresh untuk v5.
-// Revisi v5.2: angleDiff dari random.js menggantikan loop while manual.
-import { angleDiff } from './random.js';
+// NEON TIDE v5 — police helicopter AIR-1. Active at wanted 4-5: it flies
+// above the player, sweeps a spotlight, and keeps the heat from cooling
+// while it watches. Pure pursuit pressure; it never shoots.
+import { dist, angleDiff } from './random.js';
 
-export function makeHeli() {
-  return {
-    x: 0, y: 0, angle: 0, active: false, rotorT: 0,
-    lockT: 0, name: 'AIR-1', hoverR: 170, speed: 260,
-  };
-}
-
-// Update helikopter: terbang di atas pemain, spotlight mengunci bila dekat.
-export function updateHeli(G, dt) {
-  const heli = G.heli;
-  const p = G.player;
-  if (G.wantedLevel >= 4 && G.mode === 'play') {
-    if (!heli.active) {
-      heli.active = true;
-      heli.x = p.x - 260;
-      heli.y = p.y - 260;
-      G.dialog = { name: 'PSPD Dispatch', role: 'Radio Polisi', text: 'AIR-1 di udara. Spotlight mengunci Marlowe — jangan sampai lolos.', t: 0 };
-      G.audio.sfx('heli');
-    }
-  } else if (heli.active && G.wantedLevel < 4) {
-    heli.active = false;
-    heli.lockT = 0;
-  }
-  if (!heli.active) return;
-  heli.rotorT += dt;
-  // Terbang mendekat lalu hover melingkar di atas pemain.
-  const d = Math.hypot(p.x - heli.x, p.y - heli.y);
-  const want = Math.atan2(p.y - heli.y, p.x - heli.x);
-  const da = angleDiff(heli.angle, want);
-  heli.angle += da * Math.min(1, dt * 2);
-  if (d > heli.hoverR) {
-    heli.x += Math.cos(want) * heli.speed * dt;
-    heli.y += Math.sin(want) * heli.speed * dt;
-  } else {
-    // Orbit pelan di atas pemain.
-    const orbit = heli.rotorT * 0.35;
-    heli.x = p.x + Math.cos(orbit) * heli.hoverR;
-    heli.y = p.y + Math.sin(orbit) * heli.hoverR;
-  }
-  // Spotlight mengunci bila heli dalam 340px: wanted tidak turun.
-  if (d < 340) {
-    heli.lockT += dt;
-    G.lastSeenT = 0;
-    G.spotlightOn = true;
-  } else {
-    heli.lockT = Math.max(0, heli.lockT - dt);
-    G.spotlightOn = heli.lockT > 0.5;
-  }
-  // Rotor wash: partikel debu + goyangan halus saat heli dekat.
-  if (d < 420 && Math.random() < 0.5) {
-    G.particles.burst(p.x + (Math.random() - 0.5) * 120, p.y + (Math.random() - 0.5) * 120, 'dust', 1);
-  }
-  if (d < 260) G.shake = Math.max(G.shake, 1.5);
-}
-
-// Apakah spotlight sedang mengunci pemain (untuk HUD + render)?
-export function spotlightLocked(G) {
-  return !!(G.heli && G.heli.active && G.spotlightOn);
+export function updateHeli(g, dt) {
+  const heli = g.heli;
+  const want = g.wanted >= 4 && g.mode === 'play';
+  heli.active = want;
+  if (!want) return;
+  const p = g.player;
+  const d = dist(heli.x, heli.y, p.x, p.y);
+  const a = Math.atan2(p.y - heli.y, p.x - heli.x);
+  heli.angle += angleDiff(heli.angle, a) * Math.min(1, dt * 1.5);
+  const speed = d > 260 ? 320 : 140;
+  heli.x += Math.cos(heli.angle) * speed * dt;
+  heli.y += Math.sin(heli.angle) * speed * dt;
+  heli.x = Math.max(60, Math.min(2340, heli.x));
+  heli.y = Math.max(60, Math.min(1540, heli.y));
+  heli.spotA = a + Math.sin(g.time * 1.4) * 0.25;
+  heli.spotOn = d < 700;
+  // AIR-1 watching means the heat never cools off on its own.
+  if (heli.spotOn) g.wantedQuietT = 0;
 }

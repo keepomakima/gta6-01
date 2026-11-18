@@ -1,264 +1,166 @@
-// NEON TIDE v5 — police.js
-// Sistem wanted 0-5 bintang + respons PSPD: foot cop mengejar dan menangkap,
-// cruiser mengejar dan meramming mobil pemain, roadblock di 3 bintang ke
-// atas, wanted turun bila lolos dari pandangan. Baru v5: spike strip di
-// wanted 4+ (ban bocor, top speed -55%) dan manuver PIT — cruiser menabrak
-// sisi belakang mobil untuk memutarnya. Busted / Wasted + denda.
-// damagePlayer tinggal di sini (bukan combat.js) — pelajaran dari bug v2.
-// Revisi v5.2: PIT hanya aktif saat pemain ngebut (>260) dan wanted >= 3.
-import { CAR_TYPES } from './config.js';
-import { clamp, dist, angleDiff } from './random.js';
+// NEON TIDE v5 — wanted level and police: foot cops, cruisers, roadblocks,
+// spike strips (wanted 4+) and the PIT maneuver (wanted 3+). Cops spawn at
+// a distance and chase; lose them and the heat cools off on its own.
+import { COP_FOOT_SPEED, CRUISER_SPAWN_DIST, SPIKE_MIN_WANTED, PIT_MIN_WANTED } from './config.js';
 import { makeCar } from './entities.js';
-import { enemyShoot } from './combat.js';
+import { dist, clamp, angleDiff } from './random.js';
+import { burst } from './particles.js';
 
-export function makeCop(x, y) {
-  return {
-    id: Math.floor(Math.random() * 1e9), kind: 'cop', x, y,
-    hp: 100, alive: true, speed: 165, angle: 0, fireT: 1.5, name: 'Officer',
-  };
+// Seconds between PIT attempts by the same cruiser.
+const PIT_COOLDOWN = 6;
+
+export function addWanted(g, n, reason) {
+  if (g.mode !== 'play') return;
+  g.wanted = clamp(g.wanted + n, 0, 5);
+  g.wantedQuietT = 0;
+  if (n > 0) g.popup(`WANTED ${g.wanted}★ ${reason || ''}`);
 }
 
-export function makeCruiser(x, y) {
-  const c = makeCar('cruiser', x, y, 0, { ai: null });
-  c.kind = 'cruiser';
-  c.name = 'Unit ' + (10 + Math.floor(Math.random() * 80));
-  c.ramT = 0;
+export function spawnCop(g, nearX, nearY) {
+  // Spawn on a ring around the player, never closer than 200px: a spawn
+  // point clamped back inside the city must not land on top of the player
+  // (the old code could clamp a south spawn to 60px and bust instantly).
+  let x = nearX, y = nearY - 320;
+  for (let tries = 0; tries < 8; tries++) {
+    const a = Math.random() * Math.PI * 2;
+    const cx = clamp(nearX + Math.cos(a) * 320, 40, 2360);
+    const cy = clamp(nearY + Math.sin(a) * 320, 40, 1560);
+    if (dist(cx, cy, nearX, nearY) >= 200) { x = cx; y = cy; break; }
+    x = cx; y = cy;
+  }
+  const cop = { x, y, speed: COP_FOOT_SPEED, hp: 50, fireT: 2 };
+  g.cops.push(cop);
+  return cop;
+}
+
+export function spawnCruiser(g) {
+  const p = g.player;
+  let x = p.x, y = Math.max(60, p.y - CRUISER_SPAWN_DIST);
+  for (let tries = 0; tries < 8; tries++) {
+    const a = Math.random() * Math.PI * 2;
+    const cx = clamp(p.x + Math.cos(a) * CRUISER_SPAWN_DIST, 60, 2340);
+    const cy = clamp(p.y + Math.sin(a) * CRUISER_SPAWN_DIST, 60, 1540);
+    if (dist(cx, cy, p.x, p.y) >= 300) { x = cx; y = cy; break; }
+    x = cx; y = cy;
+  }
+  const c = makeCar('cruiser', x, y, 0, false);
   c.pitT = 0;
+  g.cruisers.push(c);
   return c;
 }
 
-// Naikkan wanted (maks 5) dan beri tahu HUD kenapa.
-export function raiseWanted(G, n, reason) {
-  const before = G.wantedLevel;
-  G.wantedLevel = clamp(G.wantedLevel + n, 0, 5);
-  if (G.wantedLevel > before) {
-    G.wantedReason = reason || 'kejahatan terlihat';
-    G.wantedT = 0;
-    G.lastSeenT = 0;
-    if (G.wantedLevel >= 4) G.audio.sfx('siren');
-  }
-}
+export function updatePolice(g, dt) {
+  const p = g.player;
+  const w = g.wanted;
+  // Keep the force proportional to the heat.
+  const wantCops = w === 0 ? 0 : w <= 2 ? 2 : w <= 3 ? 3 : 4;
+  while (g.cops.length < wantCops) spawnCop(g, p.x, p.y);
+  if (g.cops.length > wantCops) g.cops.length = wantCops;
+  const wantCruisers = w <= 1 ? 0 : w === 2 ? 1 : w === 3 ? 2 : 3;
+  while (g.cruisers.length < wantCruisers) spawnCruiser(g);
+  if (g.cruisers.length > wantCruisers) g.cruisers.length = wantCruisers;
 
-// Turunkan wanted (dipakai misi Lose the Heat & debug).
-export function setWanted(G, n) {
-  G.wantedLevel = clamp(n, 0, 5);
-  G.wantedT = 0;
-  G.lastSeenT = 0;
-  if (n === 0) {
-    G.police = G.police.filter((u) => u.kind === 'roadblock');
-    G.roadblock = null;
-    G.spike = null;
-    if (G.heli) G.heli.active = false;
-  }
-}
-
-// Damage ke pemain: armor menyerap dulu, lalu HP. Wasted bila HP habis.
-export function damagePlayer(G, n, source) {
-  const p = G.player;
-  if (!p.alive || G.mode !== 'play' || p.hurtT > 0) return;
-  p.hurtT = 0.35;
-  let left = n;
-  if (p.armor > 0) {
-    const absorbed = Math.min(p.armor, left);
-    p.armor -= absorbed;
-    left -= absorbed;
-  }
-  p.hp -= left;
-  G.audio.sfx('hurt');
-  G.shake = Math.min(10, G.shake + 4);
-  if (p.hp <= 0) {
-    p.hp = 0;
-    p.alive = false;
-    G.mode = 'wasted';
-    G.audio.sfx('wasted');
-  }
-}
-
-// Spawn unit polisi sesuai wanted. Dipanggil berkala dari main loop.
-export function updatePolice(G, dt) {
-  const p = G.player;
-  const w = G.wantedLevel;
-  if (G.mode !== 'play') return;
-  // Hitung jarak pandang: ada polisi yang melihat pemain?
-  let seen = false;
-  for (const u of G.police) {
-    if (dist(u.x, u.y, p.x, p.y) < 520) { seen = true; break; }
-  }
-  if (seen) { G.lastSeenT = 0; }
-  else {
-    G.lastSeenT += dt;
-    if (w > 0 && G.lastSeenT > 6) {
-      setWanted(G, w - 1);
-      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Mereka kehilangan jejakku. Wanted turun.', t: 0 };
+  // Foot cops chase and grab the player on contact -> Busted.
+  for (const cop of g.cops) {
+    const d = dist(cop.x, cop.y, p.x, p.y);
+    if (d > 26) {
+      const a = Math.atan2(p.y - cop.y, p.x - cop.x);
+      cop.x += Math.cos(a) * cop.speed * dt;
+      cop.y += Math.sin(a) * cop.speed * dt;
+    } else if (w > 0 && g.mode === 'play' && !p.inCar) {
+      // A foot cop only busts a player on foot — not one inside a car.
+      g.busted();
     }
   }
-  // Spawn foot cop bila kurang (maks 1 + wanted).
-  const cops = G.police.filter((u) => u.kind === 'cop');
-  const wantCops = w >= 1 ? Math.min(1 + w, 5) : 0;
-  if (cops.length < wantCops && G.spawnT <= 0) {
-    G.spawnT = 1.2;
-    const a = Math.random() * Math.PI * 2;
-    const cop = makeCop(p.x + Math.cos(a) * 320, p.y + Math.sin(a) * 320);
-    cop.name = 'Officer ' + ['Reyes', 'Dunn', 'Marsh', 'Cole', 'Vega'][cops.length % 5];
-    G.police.push(cop);
-  }
-  // Spawn cruiser bila wanted >= 2 (maks wanted-1).
-  const cruisers = G.police.filter((u) => u.kind === 'cruiser');
-  const wantCruisers = w >= 2 ? Math.min(w - 1, 4) : 0;
-  if (cruisers.length < wantCruisers && G.spawnT <= 0) {
-    G.spawnT = 2.0;
-    const a = Math.random() * Math.PI * 2;
-    const c = makeCruiser(p.x + Math.cos(a) * 420, p.y + Math.sin(a) * 420);
-    c.angle = Math.atan2(p.y - c.y, p.x - c.x);
-    G.police.push(c);
-  }
-  G.spawnT -= dt;
 
-  // Roadblock di wanted 3+: dua cruiser parkir melintang di depan pemain.
-  if (w >= 3 && !G.roadblock) {
-    const ahead = p.inCar ? p.inCar.angle : p.angle;
-    const bx = p.x + Math.cos(ahead) * 420;
-    const by = p.y + Math.sin(ahead) * 420;
-    const rb1 = makeCruiser(bx, by); rb1.kind = 'roadblock'; rb1.name = 'Roadblock A';
-    const rb2 = makeCruiser(bx + 40, by + 40); rb2.kind = 'roadblock'; rb2.name = 'Roadblock B';
-    rb1.parked = true; rb2.parked = true;
-    G.police.push(rb1, rb2);
-    G.roadblock = { x: bx, y: by, t: 0 };
-    G.dialog = { name: 'PSPD Dispatch', role: 'Radio Polisi', text: 'Roadblock dipasang di depanmu. Menyerahlah, Marlowe.', t: 0 };
-  }
-  if (w < 3 && G.roadblock) {
-    G.police = G.police.filter((u) => u.kind !== 'roadblock');
-    G.roadblock = null;
-  }
-  if (G.roadblock) G.roadblock.t += dt;
-
-  // Spike strip baru v5: wanted 4+, dipasang di depan pemain, sekali pakai.
-  if (w >= 4 && !G.spike && G.spikeT <= 0) {
-    const ahead = p.inCar ? p.inCar.angle : p.angle;
-    G.spike = { x: p.x + Math.cos(ahead) * 380, y: p.y + Math.sin(ahead) * 380, angle: ahead + Math.PI / 2, t: 0 };
-    G.spikeT = 9;
-    G.dialog = { name: 'PSPD Dispatch', role: 'Radio Polisi', text: 'Spike strip dipasang! Jangan lewati garis itu!', t: 0 };
-  }
-  if (G.spikeT > 0) G.spikeT -= dt;
-  if (G.spike) {
-    G.spike.t += dt;
-    if (p.inCar && dist(p.x, p.y, G.spike.x, G.spike.y) < 34 && !p.inCar.spiked) {
-      p.inCar.spiked = true;
-      p.inCar.spikeT = 5;
-      p.inCar.cond = Math.max(0, p.inCar.cond - 12);
-      G.spike = null;
-      G.shake = Math.min(12, G.shake + 8);
-      G.audio.sfx('crash');
-      G.particles.burst(p.x, p.y, 'spark', 10);
-      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Ban bocor! Spike strip itu kena aku.', t: 0 };
+  // Cruisers ram the player's car; at wanted 3+ they PIT: side-swipe,
+  // spin the car and cut its speed. Cooldown per cruiser.
+  for (const c of g.cruisers) {
+    c.pitT = Math.max(0, (c.pitT || 0) - dt);
+    const d = dist(c.x, c.y, p.x, p.y);
+    const a = Math.atan2(p.y - c.y, p.x - c.x);
+    const want = Math.min(560, 260 + w * 60);
+    c.angle += angleDiff(c.angle, a) * Math.min(1, dt * 2.2);
+    c.speed += (want - c.speed) * Math.min(1, dt * 1.2);
+    c.x += Math.cos(c.angle) * c.speed * dt;
+    c.y += Math.sin(c.angle) * c.speed * dt;
+    if (p.inCar && p.car && d < 90 && w >= PIT_MIN_WANTED && c.pitT <= 0) {
+      c.pitT = PIT_COOLDOWN;
+      p.car.spinT = 0.7;
+      p.car.speed *= 0.55;
+      g.shake = Math.min(12, g.shake + 6);
+      g.popup('PIT MANEUVER!');
+      burst(g.particles, p.car.x, p.car.y, 10, '#ffb84a', 200, 0.4);
+      g.audio.crash();
+    } else if (p.inCar && p.car && d < 34) {
+      // Plain ram: damage both cars.
+      p.car.cond -= 8 * dt * 10;
+      p.car.speed *= 0.94;
+      c.speed *= 0.9;
+      if (p.car.cond <= 0) {
+        g.popup('CAR WRECKED');
+        g.exitCar(true);
+      }
     }
-    if (G.spike && G.spike.t > 14) G.spike = null;
-  }
-
-  // Gerakkan unit.
-  for (const u of G.police) {
-    if (u.kind === 'cop') updateFootCop(G, u, dt);
-    else if (u.kind === 'cruiser') updateCruiser(G, u, dt);
-    // roadblock diam di tempat.
-  }
-  // Bersihkan unit yang terlalu jauh (di luar 900px) saat wanted 0.
-  if (w === 0) G.police = G.police.filter((u) => u.kind === 'roadblock' || dist(u.x, u.y, p.x, p.y) < 900);
-}
-
-function updateFootCop(G, cop, dt) {
-  const p = G.player;
-  const d = dist(cop.x, cop.y, p.x, p.y);
-  cop.angle = Math.atan2(p.y - cop.y, p.x - cop.x);
-  if (p.inCar) {
-    // Cop tidak bisa menangkap mobil: berdiri dan menembak dari jauh.
-    cop.fireT -= dt;
-    if (d < 380 && cop.fireT <= 0) {
-      cop.fireT = 1.6;
-      enemyShoot(G, cop, p.inCar);
+    if (c.cond <= 0) {
+      burst(g.particles, c.x, c.y, 16, '#ff8a4a', 240, 0.6);
+      g.cruisers = g.cruisers.filter((x) => x !== c);
     }
-    return;
   }
-  if (d > 26) {
-    cop.x += Math.cos(cop.angle) * cop.speed * dt;
-    cop.y += Math.sin(cop.angle) * cop.speed * dt;
+
+  // Roadblocks at wanted 3+: cruisers parked across the road ahead.
+  g.roadblockT = (g.roadblockT || 0) - dt;
+  if (w >= 3 && g.roadblockT <= 0) {
+    g.roadblockT = 9;
+    const a = p.inCar && p.car ? p.car.angle : p.angle;
+    g.roadblocks.push({
+      x: clamp(p.x + Math.cos(a) * 420, 80, 2320),
+      y: clamp(p.y + Math.sin(a) * 420, 80, 1520),
+      angle: a + Math.PI / 2, t: 12,
+    });
+  }
+  for (const rb of g.roadblocks) rb.t -= dt;
+  g.roadblocks = g.roadblocks.filter((rb) => rb.t > 0);
+
+  // Spike strips at wanted 4+: dropped ahead of the player. Driving over
+  // one flats a tyre — top speed -55% for 5s, condition -12.
+  g.spikeT = (g.spikeT || 0) - dt;
+  if (w >= SPIKE_MIN_WANTED && g.spikeT <= 0) {
+    g.spikeT = 7;
+    const a = p.inCar && p.car ? p.car.angle : p.angle;
+    g.spikes.push({
+      x: clamp(p.x + Math.cos(a) * 380, 80, 2320),
+      y: clamp(p.y + Math.sin(a) * 380, 80, 1520),
+      angle: a, t: 14,
+    });
+    g.spikeSeen = true;
+  }
+  for (const s of g.spikes) {
+    s.t -= dt;
+    if (p.inCar && p.car && dist(s.x, s.y, p.car.x, p.car.y) < 34 && p.car.flatT <= 0) {
+      p.car.flatT = 5;
+      p.car.cond -= 12;
+      g.popup('SPIKE STRIP — TYRE FLAT!');
+      burst(g.particles, p.car.x, p.car.y, 8, '#9ab8d8', 160, 0.4);
+      g.audio.crash();
+    }
+  }
+  g.spikes = g.spikes.filter((s) => s.t > 0);
+
+  // Heat cools off when no police can see the player for a while.
+  let nearest = Infinity;
+  for (const cop of g.cops) nearest = Math.min(nearest, dist(cop.x, cop.y, p.x, p.y));
+  for (const c of g.cruisers) nearest = Math.min(nearest, dist(c.x, c.y, p.x, p.y));
+  if (nearest > 600) {
+    g.wantedQuietT = (g.wantedQuietT || 0) + dt;
+    if (g.wantedQuietT > 8 && w > 0) {
+      g.wanted -= 1;
+      g.wantedQuietT = 0;
+      g.popup(`heat cooling… ${g.wanted}★`);
+    }
   } else {
-    // Menangkap pemain -> Busted.
-    G.mode = 'busted';
-    p.money = Math.max(0, p.money - 100);
-    G.audio.sfx('busted');
-    return;
+    g.wantedQuietT = 0;
   }
-  // Menembak bila dekat tapi belum menyentuh.
-  cop.fireT -= dt;
-  if (d < 300 && d > 60 && cop.fireT <= 0) {
-    cop.fireT = 1.8;
-    enemyShoot(G, cop, p);
-  }
-}
 
-function updateCruiser(G, c, dt) {
-  const p = G.player;
-  const target = p.inCar || p;
-  const d = dist(c.x, c.y, target.x, target.y);
-  const want = Math.atan2(target.y - c.y, target.x - c.x);
-  const da = angleDiff(c.angle, want);
-  c.angle += clamp(da, -2.4 * dt, 2.4 * dt);
-  const top = CAR_TYPES.cruiser.top * 0.92;
-  c.speed = Math.min(top, c.speed + 300 * dt);
-  c.x += Math.cos(c.angle) * c.speed * dt;
-  c.y += Math.sin(c.angle) * c.speed * dt;
-  c.ramT -= dt;
-  c.pitT -= dt;
-  // Ramming: tabrak mobil pemain -> kerusakan + shake.
-  if (p.inCar && d < 52 && c.ramT <= 0) {
-    c.ramT = 1.0;
-    p.inCar.cond = Math.max(0, p.inCar.cond - 9);
-    G.shake = Math.min(12, G.shake + 7);
-    G.audio.sfx('crash');
-    G.particles.burst(p.x, p.y, 'spark', 8);
-    if (p.inCar.cond <= 0) {
-      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Mobilku hancur! Aku harus jalan kaki.', t: 0 };
-    }
-  }
-  // PIT baru v5: cruiser di samping belakang mobil pemain yang ngebut —
-  // dorong sisi belakang, putar mobil 40 derajat, potong kecepatan.
-  if (p.inCar && Math.abs(p.inCar.speed) > 260 && d < 62 && d > 34 && c.pitT <= 0 && G.wantedLevel >= 3) {
-    c.pitT = 2.5;
-    p.inCar.angle += 0.7;
-    p.inCar.speed *= 0.55;
-    p.inCar.cond = Math.max(0, p.inCar.cond - 6);
-    G.shake = Math.min(14, G.shake + 9);
-    G.audio.sfx('crash');
-    G.particles.burst(p.x, p.y, 'spark', 10);
-    G.popups.push({ text: 'PIT MANEUVER!', amount: 0, t: 0, x: p.x, y: p.y - 30 });
-  }
-  // Cruiser menabrak pemain jalan kaki -> damage.
-  if (!p.inCar && d < 30) {
-    damagePlayer(G, 25, 'cruiser');
-    c.speed *= -0.3;
-  }
-}
-
-// Daftar unit polisi untuk panel HUD: nama, jarak meter, status.
-export function policePanelUnits(G) {
-  const p = G.player;
-  const units = [];
-  for (const u of G.police) {
-    if (u.kind === 'roadblock') continue;
-    const meters = Math.round(dist(u.x, u.y, p.x, p.y) / 4);
-    let status = 'PURSUIT';
-    if (u.kind === 'cruiser' && p.inCar && dist(u.x, u.y, p.x, p.y) < 90) status = 'RAMMING';
-    if (u.kind === 'cop') status = dist(u.x, u.y, p.x, p.y) < 60 ? 'ARREST' : 'PURSUIT';
-    units.push({ name: u.name || (u.kind === 'cop' ? 'Foot Cop' : 'Cruiser'), meters, status });
-  }
-  if (G.heli && G.heli.active) {
-    units.push({ name: 'AIR-1', meters: Math.round(dist(G.heli.x, G.heli.y, p.x, p.y) / 4), status: 'SPOTLIGHT' });
-  }
-  if (G.roadblock) {
-    units.push({ name: 'Roadblock', meters: Math.round(dist(G.roadblock.x, G.roadblock.y, p.x, p.y) / 4), status: 'ROADBLOCK' });
-  }
-  if (G.spike) {
-    units.push({ name: 'Spike Strip', meters: Math.round(dist(G.spike.x, G.spike.y, p.x, p.y) / 4), status: 'SPIKE' });
-  }
-  return units.slice(0, 5);
+  g.audio.siren(w >= 2 && g.mode === 'play');
 }

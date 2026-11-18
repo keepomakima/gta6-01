@@ -1,50 +1,45 @@
-// NEON TIDE v5 — weather.js (BARU v5)
-// Cuaca Port Solano: cerah / hujan. Hujan turun sebagai partikel garis
-// diagonal + genangan memantul di jalan (digambar render.js) + langit lebih
-// gelap. Hujan bisa dipicu otomatis malam hari dan lewat debug (setRain).
-// Misi 15 (Neon Mile) selalu hujan — kejar-kejaran di tengah hujan deras.
-// Revisi v5.2: setRain mengunci target; updateWeather meluruhkannya pelan.
+// NEON TIDE v5 — rain weather. Intensity 0..1; diagonal streaks, wet
+// shiny roads, and automatic rain at night. setRain is the debug/manual
+// override; night rain only fills in when nothing was set manually.
 export function makeWeather() {
-  return { rain: 0, target: 0, drops: [], t: 0 };
+  return { rain: 0, manual: false, drops: [], t: 0 };
 }
 
-// Atur intensitas hujan 0..1 (0 = cerah, 1 = deras).
-export function setRain(G, v) {
-  G.weather.target = Math.max(0, Math.min(1, v));
+export function setRain(w, v) {
+  w.rain = Math.max(0, Math.min(1, v));
+  w.manual = true;
 }
 
-export function updateWeather(G, dt) {
-  const w = G.weather;
+export function isRaining(w) { return w.rain > 0.05; }
+
+export function updateWeather(w, dt, isNight) {
   w.t += dt;
-  // Transisi pelan menuju target.
-  w.rain += (w.target - w.rain) * Math.min(1, dt * 0.5);
-  // Hujan otomatis: malam hari (jam >= 21 atau < 5) kadang hujan.
-  if (G.mode === 'play' && !G.shotMode) {
-    const night = G.clockHour >= 21 || G.clockHour < 5;
-    if (night && w.target === 0 && Math.random() < dt * 0.004) w.target = 0.55;
-    if (!night && w.target > 0 && Math.random() < dt * 0.01) w.target = 0;
-  }
-  // Spawn tetes hujan di sekitar kamera.
-  const want = Math.floor(w.rain * 90);
+  if (!w.manual && isNight) w.rain = Math.min(w.rain + dt * 0.05, 0.35);
+  if (!w.manual && !isNight) w.rain = Math.max(0, w.rain - dt * 0.1);
+  // Keep a pool of drops proportional to intensity.
+  const want = Math.floor(w.rain * 260);
   while (w.drops.length < want) {
-    w.drops.push({
-      x: G.cam.x + Math.random() * 1400 - 60,
-      y: G.cam.y + Math.random() * 800 - 60,
-      v: 900 + Math.random() * 300,
-    });
+    w.drops.push({ x: Math.random() * 1400, y: Math.random() * 800, s: 500 + Math.random() * 300 });
   }
   if (w.drops.length > want) w.drops.length = want;
   for (const d of w.drops) {
-    d.y += d.v * dt;
-    d.x -= d.v * 0.22 * dt; // hujan miring kena angin
-    if (d.y > G.cam.y + 780) {
-      d.y = G.cam.y - 20;
-      d.x = G.cam.x + Math.random() * 1400;
-    }
+    d.y += d.s * dt;
+    d.x -= d.s * 0.28 * dt;
+    if (d.y > 760) { d.y = -20; d.x = 200 + Math.random() * 1400; }
+    if (d.x < -20) d.x = 1300;
   }
 }
 
-// Apakah sedang hujan (untuk HUD + efek suara)?
-export function isRaining(G) {
-  return G.weather.rain > 0.15;
+export function drawRain(ctx, w, vw, vh) {
+  if (w.rain <= 0.01) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(170,200,235,0.45)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const d of w.drops) {
+    ctx.moveTo(d.x, d.y);
+    ctx.lineTo(d.x - 7, d.y + 15);
+  }
+  ctx.stroke();
+  ctx.restore();
 }

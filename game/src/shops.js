@@ -1,82 +1,47 @@
-// NEON TIDE v5 — shops.js
-// Toko senjata Ironworks Arms + 2 safehouse. Toko: beli SMG / shotgun /
-// ammo / armor dengan uang. Safehouse: heal penuh, save ke localStorage,
-// dan perbaiki mobil. Garasi Rosa (upgrade + NOS) tinggal di garage.js.
-// Ditulis fresh untuk v5.
-// Revisi v5.2: buySelected langsung mengganti senjata aktif setelah beli.
-import { SHOP_ITEMS, PLACES, WEAPONS } from './config.js';
-import { dist } from './random.js';
+// NEON TIDE v5 — Ironworks Arms gun shop. First menu item is the SMG.
+// ArrowUp/Down to pick, Enter to buy, Escape to leave. Ammo and armor
+// are consumables; guns stay owned forever.
+import { SHOP_ITEMS } from './config.js';
 
-export function makeShop() {
-  return { open: false, selected: 0, message: '' };
+export function openShop(g) {
+  if (g.shopOpen) return;
+  g.shopOpen = true;
+  g.shopSel = 0;
+  g.mode = 'pause';
 }
 
-// Buka toko bila pemain dekat Ironworks Arms (E). Return true bila terbuka.
-export function tryOpenShop(G) {
-  const p = G.player;
-  if (dist(p.x, p.y, PLACES.gunShop.x, PLACES.gunShop.y) < 95) {
-    G.shop.open = true;
-    G.shop.selected = 0;
-    G.shop.message = 'Selamat datang di Ironworks Arms.';
-    G.audio.sfx('shop');
-    return true;
-  }
-  return false;
+export function closeShop(g) {
+  g.shopOpen = false;
+  g.mode = 'play';
 }
 
-// Beli item yang sedang dipilih (Enter di toko). Beli senjata langsung
-// mengganti senjata aktif supaya bisa dipakai di combat tanpa buka menu lagi.
-export function buySelected(G) {
-  const p = G.player;
-  const item = SHOP_ITEMS[G.shop.selected];
-  if (!item) return;
-  if (p.money < item.price) {
-    G.shop.message = 'Uang tidak cukup untuk ' + item.label + '.';
-    G.audio.sfx('fail');
-    return;
+export function shopKey(g, code) {
+  if (code === 'ArrowDown') g.shopSel = (g.shopSel + 1) % SHOP_ITEMS.length;
+  else if (code === 'ArrowUp') g.shopSel = (g.shopSel + SHOP_ITEMS.length - 1) % SHOP_ITEMS.length;
+  else if (code === 'Enter') buyShopItem(g);
+  else if (code === 'Escape') closeShop(g);
+}
+
+export function buyShopItem(g) {
+  const item = SHOP_ITEMS[g.shopSel];
+  if (g.money < item.price) { g.popup(`Need $${item.price} for ${item.label}`); return false; }
+  if ((item.id === 'smg' || item.id === 'shotgun') && g.owned[item.id]) {
+    g.popup(`You already own the ${item.label}`);
+    return false;
   }
-  p.money -= item.price;
-  if (item.id === 'smg' || item.id === 'shotgun') {
-    p.owned[item.id] = true;
-    p.ammo[item.id] = WEAPONS[item.id].ammo;
-    p.weapon = item.id;
-    G.shop.message = item.label + ' dibeli! Tekan ' + WEAPONS[item.id].slot + ' untuk memakai.';
-  } else if (item.id === 'ammo') {
-    p.ammo.pistol += 120;
-    p.ammo.smg += 240;
-    p.ammo.shotgun += 40;
-    G.shop.message = 'Ammo box dibeli: semua senjata terisi.';
+  g.money -= item.price;
+  if (item.id === 'ammo') {
+    g.player.ammo.pistol += 120;
+    g.player.ammo.smg += 120;
+    g.player.ammo.shotgun += 40;
   } else if (item.id === 'armor') {
-    p.armor = 100;
-    G.shop.message = 'Kevlar vest dipakai. Armor 100.';
+    g.player.armor = Math.min(100, g.player.armor + 50);
+  } else {
+    g.owned[item.id] = true;
+    g.player.weapon = item.id;
+    g.player.ammo[item.id] = 60;
   }
-  G.audio.sfx('pickup');
-}
-
-// Coba pakai safehouse (E): heal + save + perbaiki mobil. Return true bila kena.
-export function tryUseSafehouse(G) {
-  const p = G.player;
-  for (const key of ['safehouse1', 'safehouse2']) {
-    const s = PLACES[key];
-    if (dist(p.x, p.y, s.x, s.y) < 95) {
-      p.hp = 100;
-      p.armor = Math.max(p.armor, 50);
-      if (p.inCar) p.inCar.cond = 100;
-      G.saveGame();
-      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Safehouse — ' + s.label + '. HP pulih, game tersimpan, mobil diperbaiki.', t: 0 };
-      G.audio.sfx('save');
-      return true;
-    }
-  }
-  return false;
-}
-
-// Apakah pemain sedang dekat toko / safehouse (untuk prompt E di HUD)?
-export function nearbyInteractable(G) {
-  const p = G.player;
-  if (dist(p.x, p.y, PLACES.gunShop.x, PLACES.gunShop.y) < 95) return 'Toko Senjata — tekan E';
-  for (const key of ['safehouse1', 'safehouse2']) {
-    if (dist(p.x, p.y, PLACES[key].x, PLACES[key].y) < 95) return 'Safehouse — tekan E (heal + save)';
-  }
-  return null;
+  g.popup(`${item.label} bought — $${item.price}`);
+  g.audio.pickup();
+  return true;
 }

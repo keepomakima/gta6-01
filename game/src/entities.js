@@ -1,217 +1,200 @@
-// NEON TIDE v5 — entities.js
-// Entitas dunia: pemain Deke, mobil + motor (baru v5), pejalan kaki, musuh
-// geng, dan pickup. Fisika mobil memakai dua titik as (depan-belakang)
-// supaya tidak menempel gedung. NOS boost + upgrade garasi diterapkan di
-// driveCar. Ditulis fresh untuk v5.
-// Revisi v5.2: spikeMult diterapkan SETELAH clamp top speed supaya ban bocor
-// benar-benar memotong kecepatan, bukan tertimpa clamp berikutnya.
-import { CAR_TYPES, UPGRADES, WORLD_W, WORLD_H } from './config.js';
-import { clamp, dist } from './random.js';
-import { hitsBuilding } from './world.js';
-
-let nextId = 1;
+// NEON TIDE v5 — entities: the player, parked/driven cars, pedestrians
+// and armed enemies. Movement and collisions live here; missions, police
+// and combat decide what the entities do.
+import { CAR_TYPES, WALK_SPEED, RUN_SPEED, PLAYER_HP, NOS_MULT, NOS_DRAIN } from './config.js';
+import { clamp, dist, angleDiff } from './random.js';
+import { resolveSolid, hitsSolid } from './world.js';
+import { spawn } from './particles.js';
 
 export function makePlayer(x, y) {
   return {
-    id: nextId++, kind: 'player', x, y, angle: -Math.PI / 2, speed: 0,
-    hp: 100, armor: 0, money: 250, respect: 0, alive: true,
-    inCar: null, hurtT: 0, fireT: 0, runT: 0, weapon: 'pistol',
-    owned: { fists: true, pistol: true, smg: false, shotgun: false },
+    x, y, angle: -Math.PI / 2, hp: PLAYER_HP, armor: 0,
+    inCar: false, car: null, weapon: 'pistol',
     ammo: { pistol: 120, smg: 0, shotgun: 0 },
-    driftScore: 0, nearMissScore: 0,
-    // Baru v5: upgrade garasi + tangki NOS milik pemain.
-    upgrades: { engine: 0, tires: 0, armor: 0, nos: 0 },
-    nos: 0, nosMax: 0,
+    speed: 0, hurtT: 0, fireT: 0, dead: false,
   };
 }
 
-export function makeCar(type, x, y, angle = 0, opts = {}) {
+export function makeCar(type, x, y, angle = 0, parked = true) {
   const t = CAR_TYPES[type];
-  const maxHp = Math.round(t.hp * (opts.armorMult ?? 1));
   return {
-    id: nextId++, kind: 'car', type, x, y, angle, speed: 0,
-    cond: opts.cond ?? 100, maxCond: maxHp, parked: opts.parked ?? false,
-    driver: opts.driver ?? null,
-    color: opts.color ?? t.color, len: t.len, wid: t.wid, smokeT: 0,
-    ai: opts.ai ?? null, hornT: 0, skidT: 0, nosFlame: false,
-    spiked: false, spikeT: 0,
+    type, x, y, angle, speed: 0,
+    cond: 100, maxHp: t.hp, parked, driver: !parked,
+    color: t.color, smokeT: 0, spinT: 0, flatT: 0,
   };
+}
+
+export function carStats(car, upgrades) {
+  const t = CAR_TYPES[car.type];
+  const eng = upgrades.engine || 0;
+  const grip = upgrades.grip || 0;
+  const arm = upgrades.armor || 0;
+  return {
+    top: t.top * (1 + eng * 0.09),
+    accel: t.accel * (1 + eng * 0.08),
+    turn: t.turn * (1 + grip * 0.08),
+    maxHp: t.hp + arm * 25,
+  };
+}
+
+// Drive the car the player is in. Returns true while NOS is boosting.
+export function driveCar(g, dt) {
+  const p = g.player;
+  const car = p.car;
+  if (!car) return false;
+  const st = carStats(car, g.upgrades);
+  const inp = g.input;
+  const nosReady = (g.upgrades.nos || 0) > 0 && g.nos > 0 && inp.nos && inp.up;
+  const top = st.top * (nosReady ? NOS_MULT : 1) * (car.flatT > 0 ? 0.45 : 1);
+  if (car.spinT > 0) {
+    car.spinT -= dt;
+    car.angle += dt * 1.4;
+    car.speed *= (1 - dt * 0.8);
+  } else {
+    if (inp.up) car.speed += st.accel * dt * (nosReady ? 1.25 : 1);
+    else if (inp.dn) car.speed -= st.accel * 0.9 * dt;
+    else car.speed *= Math.max(0, 1 - dt * 1.4);
+    if (inp.handbrake) car.speed *= Math.max(0, 1 - dt * 4);
+    car.speed = clamp(car.speed, -top * 0.45, top);
+    const dir = car.speed >= 0 ? 1 : -1;
+    const steer = (inp.lf ? -1 : 0) + (inp.rt ? 1 : 0);
+    car.angle += steer * st.turn * dt * Math.min(1, Math.abs(car.speed) / 140) * dir;
+  }
+  const px = car.x, py = car.y;
+  car.x += Math.cos(car.angle) * car.speed * dt;
+  car.y += Math.sin(car.angle) * car.speed * dt;
+  if (hitsSolid(car.x, car.y, 20)) {
+    // Bounce off buildings instead of sticking inside them.
+    car.x = px; car.y = py;
+    if (Math.abs(car.speed) > 180) {
+      car.cond -= 6;
+      g.shake = Math.min(9, g.shake + 4);
+      g.audio.crash();
+    }
+    car.speed *= -0.25;
+  }
+  if (car.flatT > 0) car.flatT -= dt;
+  if (car.cond < 35 && Math.random() < dt * 6) {
+    spawn(g.particles, car.x - Math.cos(car.angle) * 18, car.y - Math.sin(car.angle) * 18,
+      { vx: (Math.random() - 0.5) * 30, vy: -40 - Math.random() * 30, life: 0.7, size: 5, color: '#888' });
+  }
+  // Skid marks + smoke when sliding or damaged.
+  if (inp.handbrake && Math.abs(car.speed) > 200 && Math.random() < dt * 20) {
+    g.addSkid(car.x - Math.cos(car.angle) * 16, car.y - Math.sin(car.angle) * 16, car.angle);
+  }
+  p.x = car.x; p.y = car.y; p.angle = car.angle;
+  if (nosReady) g.nos = Math.max(0, g.nos - NOS_DRAIN * dt);
+  return nosReady;
+}
+
+export function walkPlayer(g, dt) {
+  const p = g.player;
+  const inp = g.input;
+  let mx = (inp.rt ? 1 : 0) - (inp.lf ? 1 : 0);
+  let my = (inp.dn ? 1 : 0) - (inp.up ? 1 : 0);
+  if (mx !== 0 || my !== 0) {
+    const len = Math.hypot(mx, my);
+    const sp = inp.run ? RUN_SPEED : WALK_SPEED;
+    p.x += (mx / len) * sp * dt;
+    p.y += (my / len) * sp * dt;
+    p.angle = Math.atan2(my, mx);
+    p.speed = sp;
+  } else {
+    p.speed = 0;
+  }
+  resolveSolid(p, 14);
+  if (p.hurtT > 0) p.hurtT -= dt;
+  if (p.fireT > 0) p.fireT -= dt;
 }
 
 export function makePed(x, y, rng) {
   return {
-    id: nextId++, kind: 'ped', x, y,
-    angle: rng() * Math.PI * 2, speed: 26 + rng() * 22,
-    fleeT: 0, color: ['#e8d44d', '#7dd8ff', '#ff9d5c', '#c9a2ff', '#8affc1'][Math.floor(rng() * 5)],
-    shirt: rng() < 0.5,
+    x, y, angle: rng() * Math.PI * 2, speed: 40 + rng() * 40,
+    tx: x, ty: y, fleeT: 0, color: ['#d8a05a', '#7ab8d8', '#c87a9a', '#8ad87a'][Math.floor(rng() * 4)],
   };
+}
+
+export function updatePeds(g, dt) {
+  for (const ped of g.peds) {
+    if (ped.fleeT > 0) {
+      ped.fleeT -= dt;
+      const a = Math.atan2(ped.y - g.player.y, ped.x - g.player.x);
+      ped.x += Math.cos(a) * 150 * dt;
+      ped.y += Math.sin(a) * 150 * dt;
+    } else {
+      if (dist(ped.x, ped.y, ped.tx, ped.ty) < 24) {
+        ped.tx = Math.max(40, Math.min(2360, ped.x + (Math.random() - 0.5) * 500));
+        ped.ty = Math.max(40, Math.min(1560, ped.y + (Math.random() - 0.5) * 500));
+      }
+      const a = Math.atan2(ped.ty - ped.y, ped.tx - ped.x);
+      ped.angle = a;
+      ped.x += Math.cos(a) * ped.speed * dt;
+      ped.y += Math.sin(a) * ped.speed * dt;
+    }
+    resolveSolid(ped, 10);
+  }
 }
 
 export function makeEnemy(x, y, opts = {}) {
   return {
-    id: nextId++, kind: 'enemy', x, y, hp: opts.hp ?? 60, alive: true,
-    boss: opts.boss ?? false, angle: 0, fireT: 1 + Math.random() * 1.5,
-    speed: opts.boss ? 95 : 78, label: opts.label ?? 'Tide Rat',
-    shootT: 0, wanderA: Math.random() * Math.PI * 2,
-    sentry: opts.sentry ?? false, faceA: opts.faceA ?? 0, coneR: opts.coneR ?? 260,
+    x, y, hp: opts.hp ?? 100, alive: true,
+    guard: !!opts.guard, boss: !!opts.boss, sentry: !!opts.sentry,
+    angle: opts.angle ?? 0, fireT: 1 + Math.random(),
+    speed: opts.boss ? 95 : 70, homeX: x, homeY: y,
   };
 }
 
-export function makePickup(x, y, kind, amount) {
-  return { id: nextId++, kind: 'pickup', pkind: kind, x, y, amount, t: 0 };
-}
-
-// Gerakkan pemain jalan kaki (WASD, Shift lari). Tabrakan gedung lingkaran.
-export function movePlayerOnFoot(G, p, dir, dt) {
-  const run = G.input.down('ShiftLeft') || G.input.down('ShiftRight');
-  const sp = run ? 235 : 150;
-  p.x += dir.x * sp * dt;
-  p.y += dir.y * sp * dt;
-  p.angle = Math.atan2(dir.y, dir.x);
-  p.x = clamp(p.x, 16, WORLD_W - 16);
-  p.y = clamp(p.y, 16, WORLD_H - 16);
-  if (hitsBuilding(G.world, p.x, p.y, 14)) {
-    // Mundur setengah langkah dan geser sepanjang dinding (slide, bukan macet).
-    p.x -= dir.x * sp * dt;
-    p.y -= dir.y * sp * dt;
-    if (!hitsBuilding(G.world, p.x + dir.x * sp * dt, p.y, 14)) p.x += dir.x * sp * dt;
-    else if (!hitsBuilding(G.world, p.x, p.y + dir.y * sp * dt, 14)) p.y += dir.y * sp * dt;
-  }
-}
-
-// Fisika mobil/motor: gas W, rem/mundur S, belok A/D, handbrake Space,
-// NOS Shift (bila tangki terisi). Upgrade engine/tires/armor dari garasi.
-export function driveCar(G, car, dt) {
-  const t = CAR_TYPES[car.type];
-  const p = G.player;
-  const inp = G.input;
-  const eng = UPGRADES.engine.mult[p.upgrades.engine] ?? 1;
-  const tir = UPGRADES.tires.mult[p.upgrades.tires] ?? 1;
-  const top = t.top * eng;
-  const fwd = (inp.down('KeyW') || inp.down('ArrowUp')) ? 1 : 0;
-  const back = (inp.down('KeyS') || inp.down('ArrowDown')) ? 1 : 0;
-  const left = (inp.down('KeyA') || inp.down('ArrowLeft')) ? 1 : 0;
-  const right = (inp.down('KeyD') || inp.down('ArrowRight')) ? 1 : 0;
-  const brake = inp.down('Space');
-  // NOS: Shift + tangki > 0 + sedang ngegas. Api biru + boost 1.45x.
-  car.nosFlame = false;
-  let boost = 1;
-  if (inp.nos && p.nos > 0 && fwd && car === p.inCar) {
-    boost = 1.45;
-    p.nos = Math.max(0, p.nos - 34 * dt);
-    car.nosFlame = true;
-    if (Math.random() < 0.6) G.particles.burst(car.x - Math.cos(car.angle) * car.len / 2, car.y - Math.sin(car.angle) * car.len / 2, 'nosflame', 2);
-  }
-  // Spike strip: ban bocor — top speed dipotong 55% selama beberapa detik.
-  let spikeMult = 1;
-  if (car.spiked) {
-    car.spikeT -= dt;
-    spikeMult = 0.45;
-    if (car.spikeT <= 0) car.spiked = false;
-    if (Math.random() < 0.3) G.particles.burst(car.x, car.y, 'smoke', 1);
-  }
-  if (fwd) car.speed += t.accel * boost * dt;
-  if (back) car.speed -= (car.speed > 8 ? t.accel * 1.4 : t.accel * 0.55) * dt;
-  if (brake) car.speed *= Math.max(0, 1 - 3.2 * dt);
-  if (!fwd && !back) car.speed *= Math.max(0, 1 - 0.7 * dt);
-  car.speed = clamp(car.speed, -top * 0.45, top * boost * spikeMult);
-  const steer = (right - left) * (car.speed >= 0 ? 1 : -1);
-  car.angle += steer * t.turn * tir * dt * clamp(Math.abs(car.speed) / 120, 0.25, 1);
-  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  // Cek tabrakan di titik as depan & belakang.
-  const fx = nx + Math.cos(car.angle) * (car.len / 2 - 4);
-  const fy = ny + Math.sin(car.angle) * (car.len / 2 - 4);
-  const bx = nx - Math.cos(car.angle) * (car.len / 2 - 4);
-  const by = ny - Math.sin(car.angle) * (car.len / 2 - 4);
-  const r = car.wid / 2 + 2;
-  if (hitsBuilding(G.world, fx, fy, r) || hitsBuilding(G.world, bx, by, r)) {
-    car.speed *= -0.25; // pantul pelan + kerusakan kecil
-    damageCar(G, car, 3);
-    G.particles.burst(fx, fy, 'spark', 6);
-    G.audio.sfx('crash');
-  } else {
-    car.x = nx; car.y = ny;
-  }
-  car.x = clamp(car.x, 20, WORLD_W - 20);
-  car.y = clamp(car.y, 20, WORLD_H - 20);
-  // Bekas ban + skor DRIFT saat handbrake / belok tajam dalam kecepatan tinggi.
-  if ((brake || Math.abs(steer) > 0) && Math.abs(car.speed) > 240) {
-    car.skidT += dt;
-    if (car.skidT > 0.05) {
-      car.skidT = 0;
-      G.particles.skid(bx, by, car.angle);
-      if (Math.abs(car.speed) > 300 && G.player.driftScore < 99999) {
-        G.player.driftScore += 1;
-        if (G.player.driftScore % 90 === 0) addPopup(G, 'DRIFT +$25', 25);
+// Enemies walk toward the player and shoot when in range. Damage is low
+// on purpose (see config ENEMY_DMG): a fair fight, not a firing squad.
+export function updateEnemies(g, dt) {
+  const p = g.player;
+  for (const e of g.enemies) {
+    if (!e.alive) continue;
+    if (e.sentry) continue; // sentries hold their post; missions.js watches them
+    const d = dist(e.x, e.y, p.x, p.y);
+    if (d < 460 && g.mode === 'play') {
+      const a = Math.atan2(p.y - e.y, p.x - e.x);
+      e.angle = a;
+      if (d > 130) {
+        e.x += Math.cos(a) * e.speed * dt;
+        e.y += Math.sin(a) * e.speed * dt;
+        resolveSolid(e, 12);
+      }
+      e.fireT -= dt;
+      if (e.fireT <= 0 && d < 430) {
+        e.fireT = 1.6;
+        g.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 520, vy: Math.sin(a) * 520, from: 'enemy', life: 1.4 });
+        g.audio.blip(140, 0.08, 'sawtooth', 0.04);
+      }
+    } else if (d >= 460) {
+      // Drift back toward the post they guard.
+      const a = Math.atan2(e.homeY - e.y, e.homeX - e.x);
+      if (dist(e.x, e.y, e.homeX, e.homeY) > 30) {
+        e.x += Math.cos(a) * e.speed * 0.5 * dt;
+        e.y += Math.sin(a) * e.speed * 0.5 * dt;
       }
     }
   }
-  // Asap knalpot + asap kerusakan.
-  if (Math.abs(car.speed) > 40 && Math.random() < 0.35) {
-    G.particles.burst(bx, by, 'exhaust', 1);
+}
+
+// Hurt the player (armor absorbs first). Returns true if the player died.
+export function hurtPlayer(g, dmg) {
+  const p = g.player;
+  if (p.hurtT > 0 || g.mode !== 'play') return false;
+  p.hurtT = 0.45;
+  let rest = dmg;
+  if (p.armor > 0) {
+    const absorbed = Math.min(p.armor, rest);
+    p.armor -= absorbed;
+    rest -= absorbed;
   }
-  if (car.cond < 45) {
-    car.smokeT += dt;
-    if (car.smokeT > 0.12) { car.smokeT = 0; G.particles.burst(car.x, car.y - 6, 'smoke', 2); }
+  p.hp -= rest;
+  g.shake = Math.min(10, g.shake + 3);
+  if (p.hp <= 0) {
+    p.hp = 0;
+    g.mode = 'wasted';
+    g.audio.siren(false);
+    return true;
   }
-}
-
-export function damageCar(G, car, n) {
-  car.cond = Math.max(0, car.cond - n);
-  if (car.cond <= 0 && car.speed !== 0) car.speed *= 0.5;
-}
-
-// Popup skor mengambang (DRIFT / NEAR MISS +$).
-export function addPopup(G, text, amount) {
-  G.popups.push({ text, amount, t: 0, x: G.player.x, y: G.player.y - 30 });
-  if (amount) G.player.money += amount;
-}
-
-// Cari mobil terdekat dari titik (x,y) dalam radius r.
-export function nearestCar(cars, x, y, r) {
-  let best = null, bd = r;
-  for (const c of cars) {
-    const d = dist(c.x, c.y, x, y);
-    if (d < bd) { bd = d; best = c; }
-  }
-  return best;
-}
-
-// Pemain naik mobil/motor: sopir lari bila ada; wanted naik bila polisi melihat.
-export function enterCar(G, car) {
-  const p = G.player;
-  if (car.driver) {
-    const d = car.driver;
-    d.fleeT = 3;
-    d.x += 30; d.y += 10;
-    car.driver = null;
-    if (G.wantedLevel < 5 && G.police.some((c) => c.kind === 'cop' && dist(c.x, c.y, p.x, p.y) < 420)) {
-      G.raiseWanted(1, 'curi mobil dilihat polisi');
-    }
-  }
-  car.parked = false;
-  p.inCar = car;
-  p.x = car.x; p.y = car.y;
-  G.audio.sfx('door');
-}
-
-// Pemain turun dari mobil ke samping jalan.
-export function exitCar(G) {
-  const p = G.player;
-  const car = p.inCar;
-  if (!car) return;
-  p.inCar = null;
-  const side = car.angle + Math.PI / 2;
-  p.x = car.x + Math.cos(side) * 30;
-  p.y = car.y + Math.sin(side) * 30;
-  p.x = clamp(p.x, 16, WORLD_W - 16);
-  p.y = clamp(p.y, 16, WORLD_H - 16);
-  G.audio.sfx('door');
-}
-
-// Semua entitas harus tetap di dalam dunia.
-export function clampToWorld(e) {
-  e.x = clamp(e.x, 12, WORLD_W - 12);
-  e.y = clamp(e.y, 12, WORLD_H - 12);
+  return false;
 }

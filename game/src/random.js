@@ -1,8 +1,7 @@
-// NEON TIDE v5 — random.js
-// RNG deterministik (mulberry32) supaya autopilot screenshot dan dunia kota
-// selalu sama untuk seed yang sama. Ditulis fresh untuk v5.
-// Revisi v5.2: angleDiff/angleLerp dipakai belok cruiser + heli yang mulus.
-export function mulberry32(seed) {
+// NEON TIDE v5 — seeded deterministic random (mulberry32).
+// Screenshot scenes and traffic use this so a fixed seed replays the same
+// world every time.
+export function makeRng(seed) {
   let a = seed >>> 0;
   return function next() {
     a |= 0; a = (a + 0x6d2b79f5) | 0;
@@ -11,34 +10,18 @@ export function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-export function seededValue(seed, min, max) {
-  const r = mulberry32(seed);
-  return min + r() * (max - min);
-}
-export function pick(rng, arr) {
-  return arr[Math.floor(rng() * arr.length)];
-}
-export function randInt(rng, min, max) {
-  return min + Math.floor(rng() * (max - min + 1));
-}
-export function randRange(rng, min, max) {
-  return min + rng() * (max - min);
-}
-export function dist(ax, ay, bx, by) {
-  const dx = ax - bx, dy = ay - by;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-export function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
-}
-export function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-// Selisih sudut terpendek (radian) — untuk belok mobil/polisi yang mulus.
+
+export function range(rng, lo, hi) { return lo + rng() * (hi - lo); }
+export function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+export function chance(rng, p) { return rng() < p; }
+export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+export function lerp(a, b, t) { return a + (b - a) * t; }
+export function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+export function angleTo(ax, ay, bx, by) { return Math.atan2(by - ay, bx - ax); }
+// Smallest signed turn from angle a to angle b, in (-PI, PI].
 export function angleDiff(a, b) {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d <= -Math.PI) d += Math.PI * 2;
   return d;
 }
-export function angleLerp(a, b, t) { return a + angleDiff(a, b) * t; }

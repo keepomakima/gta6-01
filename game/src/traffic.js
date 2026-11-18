@@ -1,148 +1,92 @@
-// NEON TIDE v5 — traffic.js
-// Lalu lintas Port Solano: mobil AI mengikuti jalan (lajur kanan, belok di
-// persimpangan, berhenti bila ada mobil di depan), pejalan kaki di trotoar
-// yang lari ketakutan saat ada tembakan atau tabrakan di dekatnya. Klakson
-// saat pemain menghalangi jalan. Motor parkir baru di garasi + airfield.
-// Ditulis fresh untuk v5.
-// Revisi v5.2: motor parkir di garasi Rosa (1470,780) + apron airfield (2015,1180).
-// Revisi v5.3: motor garasi pindah ke (1520,820) — 100px dari titik interaksi
-// garasi (1420,820) — supaya E di garasi membuka menu garasi, bukan malah
-// naik motor (aturan nearCar <70px).
-import { ROADS_V, ROADS_H, WORLD_W, WORLD_H, CAR_TYPES } from './config.js';
-import { clamp, dist, pick } from './random.js';
-import { makeCar, makePed, clampToWorld } from './entities.js';
+// NEON TIDE v5 — traffic: AI cars that follow the road grid and stop at
+// junctions, plus parked cars the player can steal. Traffic cars slow for
+// the car ahead so they never pile up.
+import { makeCar, carStats } from './entities.js';
+import { ROAD_X, ROAD_Y } from './world.js';
+import { dist, pick } from './random.js';
+import { WORLD_W, WORLD_H } from './config.js';
 
-const TRAFFIC_TYPES = ['sedan', 'sedan', 'taxi', 'truck', 'sport'];
-
-export function spawnTraffic(G, n = 14) {
-  const rng = G.rng;
-  for (let i = 0; i < n; i += 1) {
-    const vertical = rng() < 0.5;
-    const type = pick(rng, TRAFFIC_TYPES);
-    let x, y, angle;
-    if (vertical) {
-      const vx = pick(rng, ROADS_V);
-      const lane = rng() < 0.5 ? -22 : 22;
-      x = vx + lane; y = rng() * WORLD_H;
-      angle = lane < 0 ? Math.PI / 2 : -Math.PI / 2;
-    } else {
-      const hy = pick(rng, ROADS_H);
-      const lane = rng() < 0.5 ? -22 : 22;
-      x = rng() * WORLD_W; y = hy + lane;
-      angle = lane < 0 ? 0 : Math.PI;
-    }
-    const car = makeCar(type, x, y, angle, { ai: { vertical, road: vertical ? x : y, speed: CAR_TYPES[type].top * 0.55 } });
-    G.cars.push(car);
+export function spawnTraffic(g, rng, n = 10) {
+  g.traffic = [];
+  const types = ['sedan', 'taxi', 'sport', 'truck', 'sedan', 'taxi'];
+  for (let i = 0; i < n; i++) {
+    const horiz = rng() < 0.5;
+    const car = makeCar(pick(rng, types),
+      horiz ? 100 + rng() * (WORLD_W - 200) : pick(rng, ROAD_X),
+      horiz ? pick(rng, ROAD_Y) : 100 + rng() * (WORLD_H - 200),
+      0, false);
+    car.axis = horiz ? 'h' : 'v';
+    car.lane = horiz ? car.y : car.x;
+    car.dir = rng() < 0.5 ? 1 : -1;
+    car.speed = 130 + rng() * 90;
+    car.driver = true;
+    g.traffic.push(car);
   }
 }
 
-export function spawnPeds(G, n = 22) {
-  const rng = G.rng;
-  for (let i = 0; i < n; i += 1) {
-    const vertical = rng() < 0.5;
-    let x, y;
-    if (vertical) {
-      x = pick(rng, ROADS_V) + (rng() < 0.5 ? -58 : 58);
-      y = rng() * WORLD_H;
-    } else {
-      x = rng() * WORLD_W;
-      y = pick(rng, ROADS_H) + (rng() < 0.5 ? -58 : 58);
-    }
-    G.peds.push(makePed(clamp(x, 20, WORLD_W - 20), clamp(y, 20, WORLD_H - 20), rng));
-  }
-}
-
-// Mobil AI: jalan lurus di lajurnya, belok acak di persimpangan, rem bila
-// ada kendaraan di depan, klakson bila pemain menghalangi. Belok hanya di
-// persimpangan supaya tidak keluar jalur di tengah jalan.
-export function updateTraffic(G, dt) {
-  const p = G.player;
-  for (const car of G.cars) {
-    if (!car.ai || car === p.inCar) continue;
-    const ai = car.ai;
-    // Belok di persimpangan (peluang kecil per detik).
-    const onCrossV = ROADS_V.some((vx) => Math.abs(car.x - vx) < 6);
-    const onCrossH = ROADS_H.some((hy) => Math.abs(car.y - hy) < 6);
-    if ((onCrossV || onCrossH) && G.rng() < dt * 0.25) {
-      const turn = G.rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
-      car.angle += turn;
-      ai.vertical = Math.abs(Math.sin(car.angle)) > 0.5;
-    }
-    // Rem bila ada mobil / pemain di depan dalam 70px.
-    const fx = car.x + Math.cos(car.angle) * 60;
-    const fy = car.y + Math.sin(car.angle) * 60;
-    let blocked = false;
-    for (const other of G.cars) {
-      if (other !== car && dist(fx, fy, other.x, other.y) < 42) { blocked = true; break; }
-    }
-    if (dist(fx, fy, p.x, p.y) < 36) {
-      blocked = true;
-      car.hornT -= dt;
-      if (car.hornT <= 0) { car.hornT = 2.5; G.audio.sfx('horn'); }
-    }
-    const target = blocked ? 0 : ai.speed;
-    car.speed += (target - car.speed) * Math.min(1, dt * 1.5);
-    car.x += Math.cos(car.angle) * car.speed * dt;
-    car.y += Math.sin(car.angle) * car.speed * dt;
-    // Keluar ujung dunia -> muncul lagi di ujung berlawanan (lalu lintas abadi).
-    if (car.x < -60) car.x = WORLD_W + 50;
-    if (car.x > WORLD_W + 60) car.x = -50;
-    if (car.y < -60) car.y = WORLD_H + 50;
-    if (car.y > WORLD_H + 60) car.y = -50;
-    // Near miss: pemain ngebut melewati traffic dengan jarak dekat.
-    if (p.inCar && Math.abs(p.inCar.speed) > 300) {
-      const d = dist(car.x, car.y, p.x, p.y);
-      if (d < 55 && !car.nearMissed) {
-        car.nearMissed = true;
-        p.nearMissScore += 1;
-        if (p.nearMissScore % 2 === 1) {
-          G.popups.push({ text: 'NEAR MISS +$40', amount: 40, t: 0, x: p.x, y: p.y - 30 });
-          p.money += 40;
-        }
-      } else if (d > 120) car.nearMissed = false;
-    }
-  }
-}
-
-// Pejalan kaki: jalan santai di trotoar, lari bila ada tembakan/tabrak dekat.
-export function updatePeds(G, dt) {
-  const p = G.player;
-  const gunshot = G.combat.shotsFiredT > 0;
-  for (const ped of G.peds) {
-    const dPlayer = dist(ped.x, ped.y, p.x, p.y);
-    if (gunshot && dPlayer < 380) ped.fleeT = 2.5;
-    if (p.inCar && Math.abs(p.inCar.speed) > 200 && dPlayer < 90) ped.fleeT = 2;
-    if (ped.fleeT > 0) {
-      ped.fleeT -= dt;
-      const away = Math.atan2(ped.y - p.y, ped.x - p.x);
-      ped.x += Math.cos(away) * 150 * dt;
-      ped.y += Math.sin(away) * 150 * dt;
-    } else {
-      ped.x += Math.cos(ped.angle) * ped.speed * dt;
-      ped.y += Math.sin(ped.angle) * ped.speed * dt;
-      if (G.rng() < dt * 0.1) ped.angle += (G.rng() - 0.5) * 1.6;
-    }
-    // Tetap di trotoar: bila masuk jalan, belok kembali.
-    if (ped.x < 20 || ped.x > WORLD_W - 20 || ped.y < 20 || ped.y > WORLD_H - 20) {
-      ped.angle += Math.PI;
-    }
-    clampToWorld(ped);
-  }
-}
-
-// Mobil parkir di pinggir jalan (bisa dicuri): lajur luar, bukan trotoar.
-// Baru v5: motor Tide Runner parkir di garasi Rosa + apron airfield.
-export function spawnParkedCars(G) {
+export function spawnParked(g, rng) {
+  // Parked, stealable cars around Old Town and the garage district.
+  // Nothing parks within 75px of the spots the player walks up to, so E
+  // always grabs the car the player was just given, never a bystander.
   const spots = [
-    ['sedan', 668, 220], ['taxi', 620, 868], ['sport', 668, 420],
-    ['sedan', 968, 620], ['truck', 1520, 868], ['sedan', 1820, 668],
-    ['sport', 2120, 868], ['taxi', 920, 1068], ['sedan', 1220, 1468],
-    ['sport', 620, 1068], ['sedan', 1820, 220], ['truck', 320, 1220],
-    ['bike', 1520, 820], ['bike', 2015, 1180], ['bike', 2220, 1420],
+    ['taxi', 760, 880], ['sedan', 580, 780],
+    ['sport', 1520, 820], ['truck', 900, 500], ['sedan', 1200, 800],
+    ['taxi', 1500, 1100], ['sedan', 300, 1100], ['sport', 1800, 500],
+    ['sedan', 900, 1400],
   ];
   for (const [type, x, y] of spots) {
-    const vertical = x % 2 === 0;
-    const car = makeCar(type, x, y, vertical ? Math.PI / 2 : 0, { parked: true });
-    G.cars.push(car);
+    const c = makeCar(type, x, y, (rng() - 0.5) * 0.6, true);
+    g.cars.push(c);
   }
+  // The Tide Runner 900 motorcycle waits by Rosa's Garage.
+  const bike = makeCar('bike', 1520, 860, 0.3, true);
+  g.cars.push(bike);
+}
+
+export function updateTraffic(g, dt) {
+  for (const car of g.traffic) {
+    let blocked = false;
+    for (const other of [...g.traffic, ...g.cars]) {
+      if (other === car) continue;
+      const d = dist(car.x, car.y, other.x, other.y);
+      if (d < 70) {
+        const ahead = car.axis === 'h'
+          ? Math.sign(other.x - car.x) === car.dir
+          : Math.sign(other.y - car.y) === car.dir;
+        if (ahead) { blocked = true; break; }
+      }
+    }
+    const p = g.player;
+    if (p.inCar && p.car && dist(car.x, car.y, p.car.x, p.car.y) < 70) blocked = true;
+    const target = blocked ? 0 : 150;
+    car.speed += (target - car.speed) * Math.min(1, dt * 2);
+    if (car.axis === 'h') {
+      car.x += car.dir * car.speed * dt;
+      car.angle = car.dir > 0 ? 0 : Math.PI;
+      if (car.x < 60) { car.dir = 1; }
+      if (car.x > WORLD_W - 60) { car.dir = -1; }
+      // Sometimes turn at a junction.
+      if (Math.abs(car.x - 1200) < 8 && Math.random() < 0.002) {
+        car.axis = 'v'; car.lane = 1200; car.dir = Math.random() < 0.5 ? 1 : -1;
+      }
+    } else {
+      car.y += car.dir * car.speed * dt;
+      car.angle = car.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      if (car.y < 60) { car.dir = 1; }
+      if (car.y > WORLD_H - 60) { car.dir = -1; }
+      if (Math.abs(car.y - 800) < 8 && Math.random() < 0.002) {
+        car.axis = 'h'; car.lane = 800; car.dir = Math.random() < 0.5 ? 1 : -1;
+      }
+    }
+  }
+}
+
+export function nearestCar(g, x, y, maxD, exclude = null) {
+  let best = null, bd = maxD;
+  for (const c of g.cars) {
+    if (c === exclude) continue;
+    const d = dist(x, y, c.x, c.y);
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best;
 }

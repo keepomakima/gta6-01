@@ -1,155 +1,128 @@
-// NEON TIDE v5 — world.js
-// Kota Port Solano 2400x1600: grid jalan, blok bangunan, 7 distrik (baru:
-// Airfield dengan runway + pesawat parkir, Neon Mile dengan 3 kasino neon),
-// pantai, pelabuhan, taman, palem, papan neon bernama, dan gedung khusus.
-// Semua posisi penting ada di jalan atau area terbuka — tidak ada di gedung.
-// Ditulis fresh untuk v5.
-// Revisi v5.2: onRoad() menghitung runway sebagai jalan (mobil bisa ngebut di atasnya).
-import { WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_HALF, DISTRICTS, PLACES } from './config.js';
-import { mulberry32, randInt, randRange } from './random.js';
+// NEON TIDE v5 — Port Solano: roads, buildings, landmarks and districts.
+// The city is a road grid; every mission point sits on a road or an open
+// plaza, never inside a building. Buildings are solid rectangles.
+import { WORLD_W, WORLD_H } from './config.js';
 
-// Blok yang sengaja dibiarkan terbuka (taman / plaza / dermaga / airfield).
-// Format: [x0, y0, x1, y1]. Revisi v5: tambah blok Airfield + Neon Mile.
-const OPEN_BLOCKS = [
-  [365, 1065, 575, 1175],   // Palm Court park — fare C (420,1120)
-  [965, 865, 1175, 975],    // Rival Corner plaza — misi 5
-  [1565, 1375, 2165, 1600], // Container yard pelabuhan — crate misi 10
-  [0, 1465, 2400, 1600],    // Dermaga selatan — vault (320,1560), kasino
-  [2165, 0, 2400, 1600],    // Pantai timur — boss arena (2380,1300)
-  [365, 265, 575, 375],     // Halaman Kestrel Club
-  [1865, 865, 2165, 1375],  // Airfield — runway + terminal (v5 baru)
-  [575, 1465, 1565, 1600],  // Neon Mile strip — kasino (v5 baru)
+export const ROAD_Y = [200, 500, 800, 1100, 1400];
+export const ROAD_X = [300, 600, 900, 1200, 1500, 1800, 2100];
+export const ROAD_W = 84;
+
+// Landmarks the missions and menus anchor on.
+export const LANDMARKS = {
+  club:      { x: 620,  y: 300,  label: 'Kestrel Club' },
+  garage:    { x: 1420, y: 820,  label: "Rosa's Garage" },
+  gunshop:   { x: 1150, y: 640,  label: 'Ironworks Arms' },
+  safehouse1:{ x: 420,  y: 420,  label: 'Safehouse — Old Town' },
+  safehouse2:{ x: 2150, y: 500,  label: 'Safehouse — Airfield' },
+  harbor:    { x: 420,  y: 1420, label: 'Harbor Docks' },
+  stash:     { x: 1820, y: 1220, label: 'Stash House' },
+  vault:     { x: 320,  y: 1560, label: 'Rival Vault' },
+  pier:      { x: 420,  y: 1500, label: 'Pier Office' },
+  casino:    { x: 1200, y: 1500, label: 'Neon Mile Casino' },
+  airfield:  { x: 2000, y: 1000, label: 'Airfield — Runway 27' },
+  bossYard:  { x: 2380, y: 1300, label: 'East Yard' },
+  gangCorner:{ x: 1000, y: 1000, label: '5th & Main' },
+};
+
+// Buildings: {x, y, w, h, kind, label}. All clear of roads and mission points.
+export const BUILDINGS = [
+  { x: 700,  y: 260,  w: 150, h: 130, kind: 'tower', label: 'Solano Tower' },
+  { x: 1000, y: 260,  w: 120, h: 110, kind: 'tower', label: 'Harbor View' },
+  { x: 1300, y: 260,  w: 160, h: 120, kind: 'tower', label: 'Kestrel Plaza' },
+  { x: 1600, y: 300,  w: 110, h: 90,  kind: 'block', label: 'Apartments' },
+  { x: 1900, y: 260,  w: 140, h: 100, kind: 'block', label: 'Motel' },
+  { x: 360,  y: 560,  w: 140, h: 120, kind: 'block', label: 'Row Houses' },
+  { x: 700,  y: 560,  w: 130, h: 110, kind: 'block', label: 'Market Hall' },
+  { x: 1000, y: 560,  w: 120, h: 100, kind: 'block', label: 'Cafe Row' },
+  { x: 1300, y: 560,  w: 140, h: 120, kind: 'block', label: 'Offices' },
+  { x: 1600, y: 560,  w: 150, h: 110, kind: 'block', label: 'Depot' },
+  { x: 1900, y: 560,  w: 130, h: 100, kind: 'block', label: 'Warehouse' },
+  { x: 360,  y: 860,  w: 150, h: 120, kind: 'block', label: 'Old Town Hall' },
+  { x: 700,  y: 860,  w: 120, h: 110, kind: 'block', label: 'Bakery' },
+  { x: 1000, y: 860,  w: 140, h: 120, kind: 'block', label: 'Arcade' },
+  { x: 1300, y: 900,  w: 130, h: 90,  kind: 'block', label: 'Garage Row' },
+  { x: 1600, y: 900,  w: 120, h: 100, kind: 'block', label: 'Storage' },
+  { x: 360,  y: 1160, w: 140, h: 110, kind: 'block', label: 'Fish Market' },
+  { x: 700,  y: 1160, w: 150, h: 120, kind: 'block', label: 'Flats' },
+  { x: 1000, y: 1160, w: 120, h: 110, kind: 'block', label: 'Laundromat' },
+  { x: 1300, y: 1160, w: 140, h: 110, kind: 'block', label: 'Workshops' },
+  { x: 2200, y: 1160, w: 130, h: 120, kind: 'block', label: 'East Yard Sheds' },
+  { x: 700,  y: 1460, w: 140, h: 90,  kind: 'block', label: 'Beach Shops' },
+  { x: 1000, y: 1460, w: 150, h: 90,  kind: 'block', label: 'Boardwalk Inn' },
+  { x: 1600, y: 1460, w: 120, h: 90,  kind: 'block', label: 'Docks Office' },
+  { x: 2200, y: 1460, w: 120, h: 90,  kind: 'block', label: 'Container Office' },
+  { x: 1950, y: 860,  w: 180, h: 80,  kind: 'terminal', label: 'Airfield Terminal' },
+  { x: 1080, y: 1470, w: 110, h: 80,  kind: 'casino', label: 'Casino Aurora' },
+  { x: 1250, y: 1470, w: 110, h: 80,  kind: 'casino', label: 'Casino Mirage' },
+  { x: 1400, y: 1470, w: 110, h: 80,  kind: 'casino', label: 'Casino Velvet' },
 ];
 
-function inOpen(x0, y0, x1, y1) {
-  return OPEN_BLOCKS.some(([a, b, c, d]) => x0 >= a && y0 >= b && x1 <= c && y1 <= d);
-}
+// Harbor containers (solid, low).
+export const CONTAINERS = [
+  { x: 300, y: 1300, w: 60, h: 40, color: '#a8542a' },
+  { x: 380, y: 1320, w: 60, h: 40, color: '#2a7aa8' },
+  { x: 1700, y: 1300, w: 80, h: 40, color: '#7aa82a' },
+  { x: 1850, y: 1330, w: 80, h: 40, color: '#a82a6a' },
+  { x: 300, y: 1180, w: 60, h: 40, color: '#2a7aa8' },
+];
 
-export function buildWorld(seed = 20261118) {
-  const rng = mulberry32(seed);
-  const buildings = [];
-  // Satu gedung per blok (kadang dua gedung kecil), inset dari tepi blok.
-  for (let vi = 0; vi <= ROADS_V.length; vi += 1) {
-    const x0 = vi === 0 ? 0 : ROADS_V[vi - 1] + ROAD_HALF;
-    const x1 = vi === ROADS_V.length ? WORLD_W : ROADS_V[vi] - ROAD_HALF;
-    for (let hi = 0; hi <= ROADS_H.length; hi += 1) {
-      const y0 = hi === 0 ? 0 : ROADS_H[hi - 1] + ROAD_HALF;
-      const y1 = hi === ROADS_H.length ? WORLD_H : ROADS_H[hi] - ROAD_HALF;
-      if (x1 - x0 < 90 || y1 - y0 < 70) continue;
-      if (inOpen(x0, y0, x1, y1)) continue;
-      const downtown = x0 >= 920 && x1 <= 1865 && y0 >= 175 && y1 <= 865;
-      const tall = downtown && rng() < 0.55;
-      const bw = randRange(rng, (x1 - x0) * 0.45, (x1 - x0) * 0.8);
-      const bh = randRange(rng, (y1 - y0) * 0.45, (y1 - y0) * 0.8);
-      const bx = x0 + (x1 - x0 - bw) / 2 + randRange(rng, -8, 8);
-      const by = y0 + (y1 - y0 - bh) / 2 + randRange(rng, -6, 6);
-      buildings.push({
-        x: bx, y: by, w: bw, h: bh,
-        tall,
-        hue: randInt(rng, 0, 5),
-        litSeed: randInt(rng, 1, 99999),
-        label: tall ? 'TOWER' : '',
-      });
-    }
-  }
-
-  // Gedung khusus bernama (digambar dengan papan neon di render.js).
-  const landmarks = [
-    { id: 'club', x: 680, y: 270, w: 170, h: 90, name: 'KESTREL', color: '#ff2e88' },
-    { id: 'garage', x: 1280, y: 665, w: 170, h: 95, name: "ROSA'S GARAGE", color: '#22e6ff' },
-    { id: 'gunshop', x: 990, y: 665, w: 150, h: 90, name: 'IRONWORKS ARMS', color: '#ffc233' },
-    { id: 'safehouse1', x: 390, y: 480, w: 130, h: 80, name: 'PALM COURT', color: '#7dff8a' },
-    { id: 'safehouse2', x: 2165, y: 540, w: 120, h: 75, name: 'BEACH HOUSE', color: '#7dff8a' },
-    { id: 'stash', x: 1900, y: 1010, w: 150, h: 60, name: 'STASH', color: '#ff5a3c' },
-    { id: 'hospital', x: 1400, y: 120, w: 170, h: 85, name: 'SOLANO GENERAL', color: '#ffffff' },
-    { id: 'police', x: 680, y: 940, w: 150, h: 85, name: 'PSPD CENTRAL', color: '#4d8dff' },
-    { id: 'motel', x: 2165, y: 1080, w: 130, h: 80, name: 'NEON TIDE MOTEL', color: '#ff2e88' },
-    // Baru v5: kasino Neon Mile + terminal airfield.
-    { id: 'casino', x: 1100, y: 1470, w: 200, h: 90, name: 'CASINO SOLANO', color: '#ff2e88' },
-    { id: 'casino2', x: 820, y: 1480, w: 140, h: 80, name: 'NEON SLOTS', color: '#ffc233' },
-    { id: 'casino3', x: 1360, y: 1480, w: 130, h: 80, name: 'TIDE ROYALE', color: '#22e6ff' },
-    { id: 'terminal', x: 1900, y: 900, w: 190, h: 80, name: 'SOLANO AIRFIELD', color: '#ffd34d' },
-  ];
-  for (const lm of landmarks) {
-    buildings.push({ x: lm.x, y: lm.y, w: lm.w, h: lm.h, tall: false, hue: 2, litSeed: 7, label: lm.name, landmark: lm.id });
-  }
-
-  // Palem di beachfront (jalur x > 2180) dan sekitar Palm Court.
-  const palms = [];
-  for (let i = 0; i < 26; i += 1) {
-    palms.push({ x: randRange(rng, 2190, 2380), y: randRange(rng, 60, 1540), s: randRange(rng, 0.8, 1.3) });
-  }
-  for (let i = 0; i < 8; i += 1) {
-    palms.push({ x: randRange(rng, 380, 560), y: randRange(rng, 1080, 1160), s: randRange(rng, 0.8, 1.2) });
-  }
-
-  // Kontainer pelabuhan di container yard.
-  const containers = [];
-  for (let i = 0; i < 22; i += 1) {
-    containers.push({
-      x: randRange(rng, 1600, 2100), y: randRange(rng, 1400, 1560),
-      w: 64, h: 26, color: ['#c94f2e', '#2e7fc9', '#c9a52e', '#3fae5a'][i % 4],
-      rot: rng() < 0.5 ? 0 : Math.PI / 2,
-    });
-  }
-
-  // Pesawat parkir di apron airfield (v5 baru) — dekorasi + tabrakan.
-  const planes = [
-    { x: 1960, y: 1240, angle: 0.3, color: '#dfe6f2' },
-    { x: 2080, y: 1300, angle: -0.4, color: '#ffd34d' },
-  ];
-
-  // Lampu jalan di tiap persimpangan (dipakai glow malam).
-  const lamps = [];
-  for (const vx of ROADS_V) for (const hy of ROADS_H) lamps.push({ x: vx + 52, y: hy - 52 });
-
-  return { buildings, landmarks, palms, containers, planes, lamps, seed };
-}
-
-// Apakah titik (x,y) berada di jalan (aspal)? Runway juga dihitung jalan.
-export function onRoad(x, y) {
-  if (x >= 1880 && x <= 2150 && y >= 1090 && y <= 1150) return true; // runway
-  for (const vx of ROADS_V) if (Math.abs(x - vx) <= ROAD_HALF) return true;
-  for (const hy of ROADS_H) if (Math.abs(y - hy) <= ROAD_HALF) return true;
-  return false;
-}
-
-// Tabrakan lingkaran vs gedung: true bila titik (x,y,r) menyentuh gedung.
-export function hitsBuilding(world, x, y, r) {
-  for (const b of world.buildings) {
-    const cx = Math.max(b.x, Math.min(x, b.x + b.w));
-    const cy = Math.max(b.y, Math.min(y, b.y + b.h));
-    const dx = x - cx, dy = y - cy;
-    if (dx * dx + dy * dy < r * r) return b;
-  }
-  return null;
-}
-
-// Nama distrik untuk titik (x,y). Airfield & Neon Mile dicek dulu (overlap).
+// Sentry posts for Mission 14 (Silent Pier). Cones face outward from the
+// pier office so a direct approach from the north slips between them, but
+// the south post watches the beach approach.
+export const SENTRY_POSTS = [
+  { x: 520, y: 1440, angle: 0 },
+  { x: 330, y: 1430, angle: Math.PI },
+  { x: 480, y: 1570, angle: -Math.PI / 2 },
+];
 export function districtAt(x, y) {
-  if (x >= 1865 && x < 2165 && y >= 865 && y < 1375) return 'Airfield';
-  if (x >= 575 && x < 1565 && y >= 1465) return 'Neon Mile';
-  if (x >= 2075) return 'Beachfront';
-  if (y >= 1375) return 'Harbor';
-  for (const d of DISTRICTS) {
-    if (['Beachfront', 'Harbor', 'Airfield', 'Neon Mile'].includes(d.name)) continue;
-    if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d.name;
-  }
+  if (x >= 1850 && y <= 1150) return 'Airfield';
+  if (x >= 900 && x < 1600 && y >= 1400) return 'Neon Mile';
+  if (y >= 1250) return 'Harbor';
+  if (x < 900 && y >= 1000) return 'Beachfront';
+  if (x >= 900 && x < 1800 && y >= 250 && y < 1000) return 'Downtown';
+  if (x < 900 && y >= 250 && y < 1000) return 'Old Town';
   return 'Suburbs';
 }
 
-// Titik jalan terdekat dari (x,y) — dipakai respawn & penempatan aman.
-export function nearestRoadPoint(x, y) {
-  let best = null, bd = Infinity;
-  for (const vx of ROADS_V) {
-    const d = Math.abs(x - vx);
-    if (d < bd) { bd = d; best = { x: vx, y }; }
-  }
-  for (const hy of ROADS_H) {
-    const d = Math.abs(y - hy);
-    if (d < bd) { bd = d; best = { x, y: hy }; }
-  }
-  return best;
+export function onRoad(x, y) {
+  for (const ry of ROAD_Y) if (Math.abs(y - ry) <= ROAD_W / 2) return true;
+  for (const rx of ROAD_X) if (Math.abs(x - rx) <= ROAD_W / 2) return true;
+  return false;
 }
 
-export { PLACES };
+function circleHitsRect(x, y, r, b) {
+  const cx = Math.max(b.x, Math.min(x, b.x + b.w));
+  const cy = Math.max(b.y, Math.min(y, b.y + b.h));
+  const dx = x - cx, dy = y - cy;
+  return dx * dx + dy * dy < r * r;
+}
+
+export function hitsSolid(x, y, r) {
+  if (x < r || y < r || x > WORLD_W - r || y > WORLD_H - r) return true;
+  for (const b of BUILDINGS) if (circleHitsRect(x, y, r, b)) return true;
+  for (const c of CONTAINERS) if (circleHitsRect(x, y, r, c)) return true;
+  return false;
+}
+
+// Push a circle out of any solid it overlaps; returns true if it collided.
+export function resolveSolid(e, r) {
+  let hit = false;
+  for (const b of [...BUILDINGS, ...CONTAINERS]) {
+    const cx = Math.max(b.x, Math.min(e.x, b.x + b.w));
+    const cy = Math.max(b.y, Math.min(e.y, b.y + b.h));
+    const dx = e.x - cx, dy = e.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < r * r && d2 > 0.01) {
+      const d = Math.sqrt(d2);
+      e.x = cx + (dx / d) * r;
+      e.y = cy + (dy / d) * r;
+      hit = true;
+    } else if (d2 <= 0.01) {
+      e.x = b.x - r - 1; // centre exactly inside: shove out to the left
+      hit = true;
+    }
+  }
+  e.x = Math.max(r, Math.min(WORLD_W - r, e.x));
+  e.y = Math.max(r, Math.min(WORLD_H - r, e.y));
+  return hit;
+}
