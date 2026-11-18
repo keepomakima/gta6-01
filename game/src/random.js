@@ -1,9 +1,6 @@
-// NEON TIDE — random.js
-// A tiny seeded RNG (mulberry32) so the city, the traffic and the screenshot
-// autopilot are deterministic for a given seed, plus a few helpers.
-
-// mulberry32: small, fast, good enough for game randomness.
-export function makeRng(seed) {
+// NEON TIDE v4 — random: deterministic seeded RNG so shots and playtests replay.
+// One job: every random choice in the game flows through here.
+export function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
     a |= 0;
@@ -14,75 +11,29 @@ export function makeRng(seed) {
   };
 }
 
-// Integer in [min, max] inclusive.
-export function randInt(rng, min, max) {
-  return min + Math.floor(rng() * (max - min + 1));
+export function makeRng(seed) {
+  const next = mulberry32(seed);
+  return {
+    next,
+    range(min, max) { return min + next() * (max - min); },
+    int(min, max) { return Math.floor(min + next() * (max - min + 1)); },
+    pick(arr) { return arr[Math.floor(next() * arr.length)]; },
+    chance(p) { return next() < p; },
+    angle() { return next() * Math.PI * 2; },
+  };
 }
 
-// Float in [min, max).
-export function randRange(rng, min, max) {
-  return min + rng() * (max - min);
+// Cheap unseeded jitter for purely cosmetic effects (never gameplay).
+export function jitter(amount) {
+  return (Math.random() - 0.5) * 2 * amount;
 }
 
-// Pick one element of an array.
-export function randPick(rng, arr) {
-  return arr[Math.floor(rng() * arr.length)];
-}
-
-// True with probability p (0..1).
-export function randBool(rng, p) {
-  return rng() < p;
-}
-
-// Either -1 or 1, at random.
-export function randSign(rng) {
-  return rng() < 0.5 ? -1 : 1;
-}
-
-// Pick one of [value, weight] pairs by weight.
-export function pickWeighted(rng, pairs) {
-  let total = 0;
-  for (const [, w] of pairs) total += w;
-  let roll = rng() * total;
-  for (const [v, w] of pairs) {
-    roll -= w;
-    if (roll <= 0) return v;
-  }
-  return pairs[pairs.length - 1][0];
-}
-
-// Fisher-Yates shuffle, in place, driven by the seeded rng.
+// Fisher-Yates shuffle driven by a seeded RNG (deterministic per seed).
 export function shuffle(rng, arr) {
-  for (let i = arr.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng() * (i + 1));
-    const tmp = arr[i];
-    arr[i] = arr[j];
-    arr[j] = tmp;
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng.next() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
   }
-  return arr;
-}
-
-// Clamp a value into [min, max].
-export function clamp(v, min, max) {
-  return v < min ? min : v > max ? max : v;
-}
-
-// Linear interpolation.
-export function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-// Shortest signed angle difference, in (-PI, PI].
-export function angleDiff(a, b) {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
-
-// Distance between two points.
-export function dist(x1, y1, x2, y2) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  return Math.sqrt(dx * dx + dy * dy);
+  return out;
 }

@@ -1,98 +1,83 @@
-// NEON TIDE — config.js
-// Every tuning constant for the open world of Port Solano lives here so the
-// rest of the game reads numbers from one place instead of hard-coding them.
+// NEON TIDE v4 — config: every tuned constant, district, vehicle and weapon.
+// One job: hold the game's numbers so no other module hard-codes them.
+export const WORLD_W = 2600;
+export const WORLD_H = 1800;
+export const VIEW_W = 1280;
+export const VIEW_H = 720;
+export const TILE = 100;
 
-// World size in pixels. The city is a road grid with five districts.
-export const WORLD_W = 2400;
-export const WORLD_H = 1600;
+export const PLAYER_SPEED = 205;
+export const PLAYER_RUN_MULT = 1.55;
+export const PLAYER_RADIUS = 14;
 
-// Roads: vertical and horizontal centre lines, each road 96 px wide.
-export const ROAD_W = 96;
-export const ROADS_V = [200, 600, 1000, 1400, 1800, 2200];
-export const ROADS_H = [200, 600, 1000, 1400];
-
-// Districts, used for naming, building style and the minimap legend.
+// District rectangles: name, bounds, palette accent, ambient feel.
 export const DISTRICTS = [
-  { name: 'Old Town', x: 0, y: 0, w: 800, h: 700, style: 'old' },
-  { name: 'Downtown', x: 800, y: 300, w: 800, h: 700, style: 'downtown' },
-  { name: 'Beachfront', x: 2000, y: 0, w: 400, h: 1600, style: 'beach' },
-  { name: 'Harbor', x: 0, y: 1100, w: 1000, h: 500, style: 'harbor' },
-  { name: 'Suburbs', x: 1000, y: 1100, w: 1000, h: 500, style: 'suburb' },
+  { name: 'DOWNTOWN', x: 900, y: 100, w: 900, h: 500, accent: '#39c6ff', neon: true },
+  { name: 'HARBOR', x: 100, y: 1150, w: 800, h: 550, accent: '#ffb347', neon: false },
+  { name: 'BEACHFRONT', x: 2250, y: 100, w: 350, h: 1600, accent: '#ff7ad9', neon: true },
+  { name: 'OLD TOWN', x: 100, y: 100, w: 700, h: 900, accent: '#ffd166', neon: false },
+  { name: 'SUBURBS', x: 1000, y: 1100, w: 1200, h: 600, accent: '#7dff8a', neon: false },
 ];
 
-// Vehicle types. speed is top speed px/s, accel px/s^2, grip steers the car.
-export const CAR_TYPES = {
-  sedan:   { name: 'Meridian Sedan', top: 330, accel: 260, brake: 420, grip: 2.6, hp: 100, len: 46, wid: 22, color: '#4a7fb5' },
-  taxi:    { name: 'Solano Cab',    top: 320, accel: 250, brake: 420, grip: 2.6, hp: 100, len: 46, wid: 22, color: '#e8b73a' },
-  sport:   { name: 'Vortex GT',     top: 480, accel: 420, brake: 560, grip: 3.4, hp: 80,  len: 48, wid: 22, color: '#c62f4e' },
-  truck:   { name: 'Hauler Truck',  top: 250, accel: 170, brake: 320, grip: 2.0, hp: 160, len: 62, wid: 26, color: '#7a6a55' },
-  cruiser: { name: 'PSPD Cruiser',  top: 400, accel: 340, brake: 520, grip: 3.0, hp: 130, len: 48, wid: 23, color: '#2b3a55' },
+export function districtAt(x, y) {
+  for (const d of DISTRICTS) {
+    if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d;
+  }
+  return DISTRICTS[0];
+}
+
+// Vehicle types: top speed px/s, acceleration, handling, health, colour.
+export const VEHICLES = {
+  sedan:   { name: 'Solano Sedan',  top: 330, accel: 240, turn: 2.6, hp: 100, color: '#5b8dd9', w: 46, h: 22 },
+  taxi:    { name: 'Port Cab',      top: 320, accel: 230, turn: 2.6, hp: 100, color: '#f5c542', w: 46, h: 22 },
+  sport:   { name: 'Tide GT',       top: 470, accel: 340, turn: 3.4, hp: 80,  color: '#e63946', w: 48, h: 21 },
+  truck:   { name: 'Harbor Hauler', top: 260, accel: 170, turn: 2.0, hp: 160, color: '#8d99ae', w: 56, h: 26 },
+  cruiser: { name: 'PSPD Cruiser',  top: 400, accel: 300, turn: 3.0, hp: 120, color: '#222831', w: 48, h: 22 },
+  armored: { name: 'Vault Truck',   top: 280, accel: 180, turn: 2.1, hp: 220, color: '#3a506b', w: 58, h: 26 },
 };
 
-export const CAR_TYPE_KEYS = ['sedan', 'taxi', 'sport', 'truck', 'cruiser'];
+// Weapons: damage, range, fire rate (shots/sec), magazine, price in shop.
+export const WEAPONS = {
+  fists:   { name: 'Fists',   dmg: 12, range: 46,  rate: 2.2, mag: Infinity, price: 0,    slot: 1 },
+  pistol:  { name: 'P-9 Pistol', dmg: 26, range: 380, rate: 3.5, mag: 12,  price: 0,    slot: 2 },
+  smg:     { name: 'Vex SMG', dmg: 16, range: 320, rate: 9.0, mag: 32,  price: 800,  slot: 3 },
+  shotgun: { name: 'Boomstick',  dmg: 55, range: 190, rate: 1.1, mag: 6,   price: 1200, slot: 4 },
+};
 
-// On-foot movement.
-export const WALK_SPEED = 210;
-export const RUN_SPEED = 330;
+export const SHOP_ITEMS = [
+  { id: 'smg', label: 'Vex SMG', price: 800, desc: 'Rapid fire, 32-round mag' },
+  { id: 'shotgun', label: 'Boomstick Shotgun', price: 1200, desc: 'Huge damage up close' },
+  { id: 'ammo', label: 'Ammo Box', price: 100, desc: '+48 rounds for current gun' },
+  { id: 'armor', label: 'Kevlar Vest', price: 300, desc: '+50 armor' },
+];
 
-// Wanted level: stars 0..5. heat is the raw score behind the stars.
-export const WANTED_MAX = 5;
-export const HEAT_PER_STAR = 100;
+// Gun shop + safehouses (x, y on a road edge so the player can reach them).
+export const GUN_SHOP = { name: 'IRONWORKS ARMS', x: 1150, y: 640, color: '#ff5d8f' };
+export const SAFEHOUSES = [
+  { name: 'Marlowe Safehouse', x: 420, y: 420, color: '#7dff8a' },
+  { name: 'Beachfront Flat', x: 2330, y: 900, color: '#ff7ad9' },
+];
 
-// Economy.
+// Key places used by missions (all on roads, never inside a building).
+export const PLACES = {
+  kestrelClub: { x: 620, y: 300, label: 'Kestrel Club' },
+  garage: { x: 1420, y: 820, label: 'Vex Garage' },
+  harborDock: { x: 420, y: 1420, label: 'Harbor Dock 7' },
+  rivalCorner: { x: 1020, y: 1020, label: 'Rival Corner' },
+  stashHouse: { x: 1820, y: 1220, label: 'Stash House' },
+  tailStart: { x: 820, y: 1020, label: 'Tail Start' },
+  cabStand: { x: 620, y: 820, label: 'Cab Stand' },
+  raceStart: { x: 220, y: 620, label: 'Race Start' },
+  gearYard: { x: 1820, y: 1420, label: 'Gear Yard' },
+  heistVault: { x: 300, y: 1560, label: 'Port Vault' },
+  beachShowdown: { x: 2380, y: 1300, label: 'Pier 9' },
+  hospital: { x: 1020, y: 620, label: 'Solano General' },
+  policeHQ: { x: 1420, y: 420, label: 'PSPD HQ' },
+};
+
+export const WANTED_DECAY_SECONDS = 14;
+export const MAX_WANTED = 5;
 export const START_MONEY = 250;
 export const DEBT_TOTAL = 50000;
-
-// Day cycle: one full day lasts DAY_LENGTH seconds of real time.
-export const DAY_LENGTH = 360;
-
-// The clock at the start of a new game: a bright morning in Port Solano.
-export const START_TIME = 9.0;
-
-// Player combat numbers.
-export const PUNCH_DAMAGE = 25;
-export const PUNCH_RANGE = 34;
-export const PUNCH_RATE = 0.38;
-export const PISTOL_DAMAGE = 34;
-export const PISTOL_AMMO_START = 24;
-export const PISTOL_MAX_AMMO = 120;
-export const BULLET_SPEED = 900;
-
-// Colours for the day/night lighting tints.
-export const SKY_TINTS = [
-  { h: 0,  tint: [8, 12, 34, 0.55] },   // deep night
-  { h: 5,  tint: [10, 14, 40, 0.45] },  // pre-dawn
-  { h: 6,  tint: [70, 60, 90, 0.25] },  // dawn
-  { h: 8,  tint: [255, 220, 160, 0.05] }, // morning
-  { h: 12, tint: [255, 255, 255, 0] },  // noon
-  { h: 17, tint: [255, 180, 110, 0.12] }, // golden hour
-  { h: 18.5, tint: [220, 110, 70, 0.30] }, // sunset
-  { h: 20, tint: [40, 30, 80, 0.40] },  // dusk
-  { h: 22, tint: [8, 12, 34, 0.55] },   // night
-  { h: 24, tint: [8, 12, 34, 0.55] },
-];
-
-// Radio stations: procedural chiptune, three moods.
-export const RADIO_STATIONS = [
-  { name: 'SOL 98.7 — Neon Drive', bpm: 112, root: 57, scale: [0, 3, 5, 7, 10], wave: 'sawtooth' },
-  { name: 'TIDE FM — Harbor Blues', bpm: 76, root: 45, scale: [0, 3, 5, 6, 10], wave: 'triangle' },
-  { name: 'KESTREL — Night Static', bpm: 140, root: 50, scale: [0, 2, 3, 7, 8], wave: 'square' },
-];
-
-// Pedestrian palette and gang colours.
-export const PED_SHIRTS = ['#d97b4f', '#5f8f5a', '#7a6fb0', '#b0567a', '#4f9d9d', '#c9a227', '#8a8f96'];
-export const GANG_COLOR = '#3f7d3a';
-export const COP_COLOR = '#24344d';
-
-// Mission reward table is in missions.js; these are the shared places.
-export const PLACES = {
-  kestrelClub: { x: 1200, y: 600, label: 'Kestrel Club' },
-  garage: { x: 1440, y: 1150, label: "Deke's Garage" },
-  harborDock: { x: 320, y: 1420, label: 'Harbor Dock 7' },
-  stashHouse: { x: 600, y: 420, label: 'Stash House' },
-  gangCorner: { x: 1600, y: 1000, label: 'Rival Corner' },
-  safehouse: { x: 1800, y: 1300, label: 'Safehouse' },
-  hospital: { x: 1000, y: 1180, label: 'St. Marina Hospital' },
-  policeStation: { x: 600, y: 820, label: 'PSPD Central' },
-  sportSpawn: { x: 1080, y: 560, label: 'Vortex GT' },
-};
+// Deterministic seed shared by the game and its screenshot autopilot.
+export const SHOT_SEED = 20261118;

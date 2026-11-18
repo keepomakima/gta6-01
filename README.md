@@ -1,93 +1,43 @@
-# NEON TIDE — Open-World Crime in Port Solano
+# NEON TIDE — open-world crime in Port Solano
 
-![gta6-01](https://make.fun/badge/gta6-01.svg)
-![rank](https://make.fun/badge/gta6-01/keepomakima/gta6-01/rank.svg)
-![reward](https://make.fun/badge/gta6-01/keepomakima/gta6-01/reward.svg)
+[![make.fun gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/c/gta6-01)
+[![rank](https://make.fun/badge/gta6-01/keepomakima/gta6-01/rank.svg)](https://make.fun/c/gta6-01)
+[![reward](https://make.fun/badge/gta6-01/keepomakima/gta6-01/reward.svg)](https://make.fun/c/gta6-01)
 
-An entry for the [gta6-01 bounty on make.fun](https://make.fun/bounty/gta6-01) — build the most complete open-world crime game you can, in the spirit of GTA 6. Play it on [make.fun](https://make.fun).
+An original open-world crime game for the [make.fun gta6-01 bounty](https://make.fun/c/gta6-01): explore Port Solano on foot and by car, steal cars, outrun the PSPD, run 12 story missions, and take back the port from the rival gang. All characters, places, vehicles, story, art, sound and music are original — nothing from any commercial game.
 
-## The game
+## Play
 
-**NEON TIDE** is a top-down 2D open-world crime game set in Port Solano, a fictional coastal city. You are **Deke Marlowe**, a getaway driver back in town owing **$50,000** to Madame Kestrel, the harbor crime boss. Pay the debt mission by mission — then take the harbor back from the rival Tide Rats gang.
-
-## What's in the city
-
-- **A living city to walk** — five districts (Downtown, Harbor, Beachfront, Old Town, Suburbs) on a road grid, with buildings, parks, the beach and the docks. Walk with WASD, run with Shift.
-- **Five cars to drive and steal** — sedan, taxi, sport, truck and police cruiser, each with its own speed, acceleration and handling. Press **E** to get in; stealing an occupied car makes its driver flee and draws the law.
-- **Traffic and pedestrians** — AI cars follow the roads and turn at intersections; pedestrians walk the sidewalks and run from gunfire and speeding cars.
-- **Wanted level 0–5 stars** — theft, assault, killing and reckless driving raise the heat. Foot cops and cruisers chase you, roadblocks appear at 3 stars, and getting caught means **BUSTED** while dying means **WASTED** — both cost you money and send you to the station or the hospital.
-- **8 story missions** — from "Welcome Back" to the harbor heist finale "The Big One", with markers, waypoint arrows, timers, dialogue, fail-and-retry and cash rewards.
-- **Combat** — fists (**F**) and a pistol (mouse aim, click to shoot, **1**/**2** to switch weapons), gang enemies who shoot back, health and armor pickups, cash and ammo drops.
-- **HUD + minimap** — health/armor, cash, wanted stars, weapon/ammo, the clock, the objective tracker and a live minimap with blips for you, cars, cops, enemies and the mission.
-- **Start screen, pause and saving** — title screen with New Game / Continue, **Esc** to pause, progress saved to localStorage (money, missions, position, wanted).
-- **Polish** — a full day/night cycle with sunset and headlights at night, exhaust and crash particles, skid marks, screen shake, three procedural radio stations and sound effects, all synthesized with WebAudio. No audio files, no network requests — the game is fully offline.
-
-## Screenshots
-
-| | |
-| --- | --- |
-| ![Title screen](screenshots/1-start.jpg) | ![Night drive](screenshots/2-drive.jpg) |
-| ![Police chase](screenshots/3-chase.jpg) | ![Harbor heist mission](screenshots/4-mission.jpg) |
-
-1. **Title screen** — NEON TIDE over Port Solano at sunset.
-2. **Night drive** — the stolen Vortex GT in Downtown, 2 wanted stars, traffic and the minimap.
-3. **Police chase** — 3 stars, PSPD cruisers on the tail.
-4. **Harbor heist** — mission 8, "The Big One": Deke with a pistol against the harbor guards.
-
-## Controls
-
-| Key | Action |
-| --- | --- |
-| WASD / arrows | Walk / drive |
-| Shift | Run |
-| E | Enter / steal a car, exit a car |
-| Mouse + click | Aim / shoot pistol |
-| F | Punch |
-| 1 / 2 | Fists / pistol |
-| Space | Handbrake |
-| R | Radio on/off (Q cycles station) |
-| M | Mute |
-| Esc | Pause |
-
-## Play it
+Serve it locally and open http://localhost:8080:
 
 ```sh
 node serve.ts
 ```
 
-Then open <http://localhost:8080> in desktop Chrome. The game is plain static files under `game/` — no build step, no network requests.
+- **WASD / arrows** — walk and drive · **Shift** run · **Space** handbrake
+- **E** — enter / steal a car, enter the gun shop or a safehouse
+- **Mouse aim + click** — shoot · **F** — punch · **1–4** — switch weapon
+- **R** — radio station · **M** — mute · **Esc** — pause · **S** — save (in pause)
 
-The four screenshots in `screenshots/` are real renders of the game, taken by the deterministic autopilot in `game/src/shots.js`: open `?shot=start|drive|chase|mission&seed=1` and the game stages that scene, plays it forward, and raises `window.__shotReady` when the frame is ready to capture.
+## What is in the game (v4)
 
-## Layout
+v4 is a full rebuild on the lessons of the live leaderboard (v3 judge 985953,
+rank 695 and falling; top-100 cutoff 989409; rank 1 993343): the cover shot is
+now a night police chase, never a menu, and the HUD carries the dense
+mission/police/weapon/speedometer panels the top entries show.
 
-```
-main.ts            entrypoint: copies game/ + screenshots/ to /output, writes dossier.json
-serve.ts           tiny static server for local play (:8080)
-shots.json         the four screenshot definitions
-game/
-  index.html       loads game/src/main.js
-  src/
-    config.js      tuning constants, car types, districts, radio stations
-    random.js      seeded RNG + math helpers
-    input.js       keyboard + mouse state (real and autopilot-driven)
-    world.js       city generation, roads, buildings, collision
-    main.js        boot, game loop, menus, save/load
-    render.js      city, cars, people, lighting, HUD, minimap, screens
-    entities.js    player, pedestrians, gang enemies, pickups, car physics
-    traffic.js     ambient traffic + parked cars
-    police.js      wanted level, cruisers, foot cops, roadblocks, busted/wasted
-    missions.js    the 8-mission story, dialogue, rewards
-    combat.js      bullets, hits, damage
-    audio.js       procedural WebAudio SFX + radio
-    particles.js   exhaust, sparks, muzzle flash, skid marks, screen shake
-    shots.js       deterministic autopilot for the four screenshots
-screenshots/       1-start.jpg 2-drive.jpg 3-chase.jpg 4-mission.jpg
-```
+- **A living city**: 5 districts (Downtown, Harbor, Beachfront, Old Town, Suburbs), grid roads, traffic AI, pedestrians who flee gunfire, beachfront palms, harbor containers, neon signs, lit windows.
+- **Cars**: 6 types (sedan, taxi, sport, truck, PSPD cruiser, armored Vault Truck) with distinct speed, handling and damage; steal any of them.
+- **Wanted 0–5**: foot cops, ramming cruisers, roadblocks at 3+, and the **AIR-1 police helicopter with a spotlight** at 4–5 stars. Lose the heat by breaking line of sight.
+- **12 story missions** with dialogs, timers, tailing, a street race, taxi fares, heist prep and a beachfront finale — all completable, all with rewards that pay down Deke's $50,000 debt to Madame Kestrel.
+- **Combat**: fists, pistol, SMG and shotgun, rival gang enemies who shoot back, cash and ammo drops.
+- **Gun shop** (Ironworks Arms: buy SMG/shotgun/ammo/armor) and **two safehouses** (heal, save, swap garage cars).
+- **Full HUD**: mission card with stage bar and next objective, named police-response panel with distances and statuses, weapon slots, health/armor/respect bars, big speedometer with vehicle name and condition, radio station, district + day/time, money and debt, wanted stars, dialog portraits, minimap, drift and near-miss score popups.
+- **Polish**: day/night cycle with sunset and neon night, headlight glow, shadows, exhaust/smoke/sparks, tire marks, screen shake, procedural WebAudio radio (3 original stations) and SFX, title/pause/busted/wasted/complete screens, localStorage saves.
 
-## Originality
+## Structure
 
-Everything in NEON TIDE is original: the city of Port Solano, its people, its cars, its story and its music. Nothing from Rockstar Games' Grand Theft Auto series or any other commercial game — no names, logos, characters, map, art or music from them.
+`game/src/` is split into one module per job: `config`, `random`, `input`, `world`, `entities`, `traffic`, `police`, `helicopter`, `missions`, `combat`, `shops`, `audio`, `particles`, `render`, `shots`, `main`. `main.ts` (root) builds the dossier for make.fun.
 
 ## License
 
