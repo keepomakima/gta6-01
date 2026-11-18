@@ -1,206 +1,222 @@
-// NEON TIDE v4 — police: wanted stars, foot cops, cruiser pursuit, roadblocks,
-// busted/wasted. One job: make the law respond to crime and let the heat cool.
-import { MAX_WANTED, WANTED_DECAY_SECONDS, PLACES } from './config.js';
+// NEON TIDE — police.js
+// Sistem wanted 0-5 bintang + respons PSPD: foot cop mengejar dan menangkap,
+// cruiser mengejar dan meramming mobil pemain, roadblock di 3 bintang ke
+// atas, wanted turun bila lolos dari pandangan. Busted / Wasted + denda.
+// damagePlayer tinggal di sini (bukan combat.js) — pelajaran dari bug v2.
+import { CAR_TYPES } from './config.js';
+import { clamp, dist } from './random.js';
 import { makeCar } from './entities.js';
-import { rectBlocked } from './world.js';
+import { enemyShoot } from './combat.js';
 
-export function addWanted(G, stars) {
-  G.wanted = Math.min(MAX_WANTED, G.wanted + stars);
-  G.heatT = 0;
+export function makeCop(x, y) {
+  return {
+    id: Math.floor(Math.random() * 1e9), kind: 'cop', x, y,
+    hp: 100, alive: true, speed: 165, angle: 0, fireT: 1.5, name: 'Officer',
+  };
+}
+
+export function makeCruiser(x, y) {
+  const c = makeCar('cruiser', x, y, 0, { ai: null });
+  c.kind = 'cruiser';
+  c.name = 'Unit ' + (10 + Math.floor(Math.random() * 80));
+  c.ramT = 0;
+  return c;
+}
+
+// Naikkan wanted (maks 5) dan beri tahu HUD kenapa.
+export function raiseWanted(G, n, reason) {
+  const before = G.wantedLevel;
+  G.wantedLevel = clamp(G.wantedLevel + n, 0, 5);
+  if (G.wantedLevel > before) {
+    G.wantedReason = reason || 'kejahatan terlihat';
+    G.wantedT = 0;
+    G.lastSeenT = 0;
+    if (G.wantedLevel >= 4) G.audio.sfx('siren');
+  }
+}
+
+// Turunkan wanted (dipakai misi Lose the Heat & debug).
+export function setWanted(G, n) {
+  G.wantedLevel = clamp(n, 0, 5);
+  G.wantedT = 0;
   G.lastSeenT = 0;
-  if (G.wanted >= 1) G.audio.sfx('siren');
-}
-
-export function crimeSeen(G) {
-  // Crimes only raise heat when a cop is near enough to witness them.
-  for (const cop of G.cops) {
-    if (Math.hypot(cop.x - G.player.x, cop.y - G.player.y) < 420) return true;
+  if (n === 0) {
+    G.police = G.police.filter((u) => u.kind === 'roadblock');
+    G.roadblock = null;
+    if (G.heli) G.heli.active = false;
   }
-  for (const c of G.cars) {
-    if (c.type === 'cruiser' && Math.hypot(c.x - G.player.x, c.y - G.player.y) < 500) return true;
-  }
-  return G.wanted > 0;
 }
 
-export function spawnFootCop(G, x, y) {
-  G.cops.push({
-    x, y, angle: 0, hp: 50, speed: 165, shootCd: 1.5, state: 'chase',
-    name: `UNIT ${String(G.cops.length + 1).padStart(2, '0')}`,
-  });
-}
-
-export function spawnCruiser(G) {
+// Damage ke pemain: armor menyerap dulu, lalu HP. Wasted bila HP habis.
+export function damagePlayer(G, n, source) {
   const p = G.player;
-  const ang = Math.random() * Math.PI * 2;
-  const x = Math.max(80, Math.min(2520, p.x + Math.cos(ang) * 520));
-  const y = Math.max(80, Math.min(1720, p.y + Math.sin(ang) * 520));
-  const car = makeCar('cruiser', x, y, Math.atan2(p.y - y, p.x - x), 'police');
-  car.speed = 200;
-  G.cars.push(car);
-  G.cruisers.push(car);
-  return car;
-}
-
-export function policeUnitList(G) {
-  // Named units with distance + status for the police response panel.
-  const p = G.player;
-  const units = [];
-  for (const cop of G.cops) {
-    units.push({
-      name: cop.name || 'UNIT',
-      dist: Math.round(Math.hypot(cop.x - p.x, cop.y - p.y) / 10),
-      status: cop.state === 'chase' ? 'PURSUIT' : cop.state.toUpperCase(),
-    });
-  }
-  for (const c of G.cruisers) {
-    units.push({
-      name: 'PSPD-' + String(G.cruisers.indexOf(c) + 1).padStart(2, '0'),
-      dist: Math.round(Math.hypot(c.x - p.x, c.y - p.y) / 10),
-      status: 'RAMMING',
-    });
-  }
-  if (G.heli.active) {
-    units.push({ name: 'AIR-1', dist: Math.round(G.heli.dist / 10), status: G.heli.spotOn ? 'SPOTLIGHT' : 'IN SIGHT' });
-  }
-  if (G.roadblock && G.wanted >= 3) {
-    units.push({ name: 'ROADBLOCK', dist: Math.round(Math.hypot(G.roadblock.x - p.x, G.roadblock.y - p.y) / 10), status: 'ROADBLOCK' });
-  }
-  return units.slice(0, 5);
-}
-
-export function updatePolice(G, dt) {
-  const p = G.player;
-  // Spawn pressure scales with stars.
-  const wantCops = G.wanted >= 1 ? Math.min(2 + G.wanted, 6) : 0;
-  const wantCruisers = G.wanted >= 2 ? Math.min(G.wanted - 1, 3) : 0;
-  if (G.cops.length < wantCops && Math.random() < dt * 0.8) {
-    const ang = Math.random() * Math.PI * 2;
-    spawnFootCop(G, p.x + Math.cos(ang) * 380, p.y + Math.sin(ang) * 380);
-  }
-  if (G.cruisers.length < wantCruisers && Math.random() < dt * 0.5) spawnCruiser(G);
-
-  // Roadblock at 3+ stars: a cruiser parked across the road ahead.
-  if (G.wanted >= 3 && !G.roadblock) {
-    const ahead = p.inCar ? p.inCar.angle : p.angle;
-    const bx = p.x + Math.cos(ahead) * 420;
-    const by = p.y + Math.sin(ahead) * 420;
-    const car = makeCar('cruiser', bx, by, ahead + Math.PI / 2, 'roadblock');
-    G.cars.push(car);
-    G.roadblock = { x: bx, y: by, car, t: 0 };
-  }
-  if (G.roadblock) {
-    G.roadblock.t += dt;
-    if (G.wanted < 3 || G.roadblock.t > 40) {
-      const car = G.roadblock.car;
-      if (car) { car.driver = null; car.parked = true; }
-      G.roadblock = null;
-    }
-  }
-
-  // Foot cops chase and shoot.
-  for (const cop of G.cops) {
-    const d = Math.hypot(p.x - cop.x, p.y - cop.y);
-    cop.angle = Math.atan2(p.y - cop.y, p.x - cop.x);
-    if (d > 34) {
-      const nx = cop.x + Math.cos(cop.angle) * cop.speed * dt;
-      const ny = cop.y + Math.sin(cop.angle) * cop.speed * dt;
-      if (!rectBlocked(G.world, nx, ny, 12)) { cop.x = nx; cop.y = ny; }
-    } else if (G.mode === 'play' && p.onFoot) {
-      // Busted: a cop catches the player on foot (never inside a moving car).
-      bustPlayer(G, 'busted');
-    }
-    cop.shootCd -= dt;
-    if (d < 340 && cop.shootCd <= 0) {
-      cop.shootCd = 1.6 + Math.random();
-      if (Math.random() < 0.45) {
-        damagePlayer(G, 8, 'cop');
-        G.particles.muzzle(cop.x, cop.y, cop.angle);
-        G.audio.sfx('shot');
-      }
-    }
-  }
-
-  // Cruisers ram the player's car (or chase on foot).
-  for (const c of G.cruisers) {
-    const d = Math.hypot(p.x - c.x, p.y - c.y);
-    const target = Math.atan2(p.y - c.y, p.x - c.x);
-    let diff = target - c.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    c.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
-    c.speed = Math.min(430, c.speed + 120 * dt);
-    const nx = c.x + Math.cos(c.angle) * c.speed * dt;
-    const ny = c.y + Math.sin(c.angle) * c.speed * dt;
-    c.x = nx; c.y = ny;
-    if (d < 44 && p.inCar) {
-      p.inCar.hp -= 14;
-      G.particles.sparks(p.x, p.y);
-      G.audio.sfx('crash');
-      G.shake = 7;
-      c.speed *= 0.4;
-    } else if (d < 30 && p.onFoot && G.mode === 'play') {
-      bustPlayer(G, 'busted');
-    }
-  }
-
-  // Heat decays only when no cop can see the player.
-  let seen = false;
-  for (const cop of G.cops) if (Math.hypot(cop.x - p.x, cop.y - p.y) < 380) seen = true;
-  for (const c of G.cruisers) if (Math.hypot(c.x - p.x, c.y - p.y) < 420) seen = true;
-  if (G.heli.active && G.heli.spotOn) seen = true;
-  if (!seen && G.wanted > 0) {
-    G.heatT += dt;
-    if (G.heatT > WANTED_DECAY_SECONDS) {
-      G.wanted -= 1;
-      G.heatT = 0;
-      if (G.wanted === 0) standDown(G);
-    }
-  } else {
-    G.heatT = 0;
-  }
-  G.lastSeenT = seen ? 0 : G.lastSeenT + dt;
-}
-
-export function standDown(G) {
-  G.cops = [];
-  for (const c of G.cruisers) { c.driver = null; c.parked = true; }
-  G.cruisers = [];
-  if (G.roadblock) { G.roadblock.car.driver = null; G.roadblock = null; }
-  G.heli.active = false;
-  G.heli.spotOn = false;
-}
-
-export function damagePlayer(G, amount, source) {
-  const p = G.player;
-  if (G.mode !== 'play' || p.hurtT > 0) return;
-  p.hurtT = 0.5;
-  let left = amount;
+  if (!p.alive || G.mode !== 'play' || p.hurtT > 0) return;
+  p.hurtT = 0.35;
+  let left = n;
   if (p.armor > 0) {
     const absorbed = Math.min(p.armor, left);
     p.armor -= absorbed;
     left -= absorbed;
   }
   p.hp -= left;
-  G.shake = Math.max(G.shake, 4);
+  G.audio.sfx('hurt');
+  G.shake = Math.min(10, G.shake + 4);
   if (p.hp <= 0) {
     p.hp = 0;
-    bustPlayer(G, 'wasted');
+    p.alive = false;
+    G.mode = 'wasted';
+    G.audio.sfx('wasted');
   }
 }
 
-export function bustPlayer(G, kind) {
+// Spawn unit polisi sesuai wanted. Dipanggil berkala dari main loop.
+export function updatePolice(G, dt) {
   const p = G.player;
+  const w = G.wantedLevel;
   if (G.mode !== 'play') return;
-  G.mode = kind;
-  G.audio.sfx('fail');
-  const fine = kind === 'busted' ? 100 : 200;
-  p.money = Math.max(0, p.money - fine);
-  p.hp = 100;
-  p.armor = 0;
-  standDown(G);
-  G.wanted = 0;
-  if (p.inCar) { p.inCar.driver = null; p.inCar = null; p.onFoot = true; }
-  const spot = kind === 'busted' ? PLACES.policeHQ : PLACES.hospital;
-  p.x = spot.x; p.y = spot.y;
-  G.bustedKind = kind;
+  // Hitung jarak pandang: ada polisi yang melihat pemain?
+  let seen = false;
+  for (const u of G.police) {
+    if (dist(u.x, u.y, p.x, p.y) < 520) { seen = true; break; }
+  }
+  if (seen) { G.lastSeenT = 0; }
+  else {
+    G.lastSeenT += dt;
+    if (w > 0 && G.lastSeenT > 6) {
+      setWanted(G, w - 1);
+      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Mereka kehilangan jejakku. Wanted turun.', t: 0 };
+    }
+  }
+  // Spawn foot cop bila kurang (maks 1 + wanted).
+  const cops = G.police.filter((u) => u.kind === 'cop');
+  const wantCops = w >= 1 ? Math.min(1 + w, 5) : 0;
+  if (cops.length < wantCops && G.spawnT <= 0) {
+    G.spawnT = 1.2;
+    const a = Math.random() * Math.PI * 2;
+    const cop = makeCop(p.x + Math.cos(a) * 320, p.y + Math.sin(a) * 320);
+    cop.name = 'Officer ' + ['Reyes', 'Dunn', 'Marsh', 'Cole', 'Vega'][cops.length % 5];
+    G.police.push(cop);
+  }
+  // Spawn cruiser bila wanted >= 2 (maks wanted-1).
+  const cruisers = G.police.filter((u) => u.kind === 'cruiser');
+  const wantCruisers = w >= 2 ? Math.min(w - 1, 4) : 0;
+  if (cruisers.length < wantCruisers && G.spawnT <= 0) {
+    G.spawnT = 2.0;
+    const a = Math.random() * Math.PI * 2;
+    const c = makeCruiser(p.x + Math.cos(a) * 420, p.y + Math.sin(a) * 420);
+    c.angle = Math.atan2(p.y - c.y, p.x - c.x);
+    G.police.push(c);
+  }
+  G.spawnT -= dt;
+
+  // Roadblock di wanted 3+: dua cruiser parkir melintang di depan pemain.
+  if (w >= 3 && !G.roadblock) {
+    const ahead = p.inCar ? p.inCar.angle : p.angle;
+    const bx = p.x + Math.cos(ahead) * 420;
+    const by = p.y + Math.sin(ahead) * 420;
+    const rb1 = makeCruiser(bx, by); rb1.kind = 'roadblock'; rb1.name = 'Roadblock A';
+    const rb2 = makeCruiser(bx + 40, by + 40); rb2.kind = 'roadblock'; rb2.name = 'Roadblock B';
+    rb1.parked = true; rb2.parked = true;
+    G.police.push(rb1, rb2);
+    G.roadblock = { x: bx, y: by, t: 0 };
+    G.dialog = { name: 'PSPD Dispatch', role: 'Radio Polisi', text: 'Roadblock dipasang di depanmu. Menyerahlah, Marlowe.', t: 0 };
+  }
+  if (w < 3 && G.roadblock) {
+    G.police = G.police.filter((u) => u.kind !== 'roadblock');
+    G.roadblock = null;
+  }
+  if (G.roadblock) G.roadblock.t += dt;
+
+  // Gerakkan unit.
+  for (const u of G.police) {
+    if (u.kind === 'cop') updateFootCop(G, u, dt);
+    else if (u.kind === 'cruiser') updateCruiser(G, u, dt);
+    // roadblock diam di tempat.
+  }
+  // Bersihkan unit yang terlalu jauh (di luar 900px) saat wanted 0.
+  if (w === 0) G.police = G.police.filter((u) => u.kind === 'roadblock' || dist(u.x, u.y, p.x, p.y) < 900);
+}
+
+function updateFootCop(G, cop, dt) {
+  const p = G.player;
+  const d = dist(cop.x, cop.y, p.x, p.y);
+  cop.angle = Math.atan2(p.y - cop.y, p.x - cop.x);
+  if (p.inCar) {
+    // Cop tidak bisa menangkap mobil: berdiri dan menembak dari jauh.
+    cop.fireT -= dt;
+    if (d < 380 && cop.fireT <= 0) {
+      cop.fireT = 1.6;
+      enemyShoot(G, cop, p.inCar);
+    }
+    return;
+  }
+  if (d > 26) {
+    cop.x += Math.cos(cop.angle) * cop.speed * dt;
+    cop.y += Math.sin(cop.angle) * cop.speed * dt;
+  } else {
+    // Menangkap pemain -> Busted.
+    G.mode = 'busted';
+    p.money = Math.max(0, p.money - 100);
+    G.audio.sfx('busted');
+    return;
+  }
+  // Menembak bila dekat tapi belum menyentuh.
+  cop.fireT -= dt;
+  if (d < 300 && d > 60 && cop.fireT <= 0) {
+    cop.fireT = 1.8;
+    enemyShoot(G, cop, p);
+  }
+}
+
+function updateCruiser(G, c, dt) {
+  const p = G.player;
+  const target = p.inCar || p;
+  const d = dist(c.x, c.y, target.x, target.y);
+  const want = Math.atan2(target.y - c.y, target.x - c.x);
+  let da = want - c.angle;
+  while (da > Math.PI) da -= Math.PI * 2;
+  while (da < -Math.PI) da += Math.PI * 2;
+  c.angle += clamp(da, -2.4 * dt, 2.4 * dt);
+  const top = CAR_TYPES.cruiser.top * 0.92;
+  c.speed = Math.min(top, c.speed + 300 * dt);
+  c.x += Math.cos(c.angle) * c.speed * dt;
+  c.y += Math.sin(c.angle) * c.speed * dt;
+  c.ramT -= dt;
+  // Ramming: tabrak mobil pemain -> kerusakan + shake.
+  if (p.inCar && d < 52 && c.ramT <= 0) {
+    c.ramT = 1.0;
+    p.inCar.cond = Math.max(0, p.inCar.cond - 9);
+    G.shake = Math.min(12, G.shake + 7);
+    G.audio.sfx('crash');
+    G.particles.burst(p.x, p.y, 'spark', 8);
+    if (p.inCar.cond <= 0) {
+      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Mobilku hancur! Aku harus jalan kaki.', t: 0 };
+    }
+  }
+  // Cruiser menabrak pemain jalan kaki -> damage.
+  if (!p.inCar && d < 30) {
+    damagePlayer(G, 25, 'cruiser');
+    c.speed *= -0.3;
+  }
+}
+
+// Daftar unit polisi untuk panel HUD: nama, jarak meter, status.
+export function policePanelUnits(G) {
+  const p = G.player;
+  const units = [];
+  for (const u of G.police) {
+    if (u.kind === 'roadblock') continue;
+    const meters = Math.round(dist(u.x, u.y, p.x, p.y) / 4);
+    let status = 'PURSUIT';
+    if (u.kind === 'cruiser' && p.inCar && dist(u.x, u.y, p.x, p.y) < 90) status = 'RAMMING';
+    if (u.kind === 'cop') status = dist(u.x, u.y, p.x, p.y) < 60 ? 'ARREST' : 'PURSUIT';
+    units.push({ name: u.name || (u.kind === 'cop' ? 'Foot Cop' : 'Cruiser'), meters, status });
+  }
+  if (G.heli && G.heli.active) {
+    units.push({ name: 'AIR-1', meters: Math.round(dist(G.heli.x, G.heli.y, p.x, p.y) / 4), status: 'SPOTLIGHT' });
+  }
+  if (G.roadblock) {
+    units.push({ name: 'Roadblock', meters: Math.round(dist(G.roadblock.x, G.roadblock.y, p.x, p.y) / 4), status: 'ROADBLOCK' });
+  }
+  return units.slice(0, 5);
 }

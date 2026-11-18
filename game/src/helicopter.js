@@ -1,48 +1,66 @@
-// NEON TIDE v4 — helicopter: the PSPD air unit at 4-5 stars.
-// One job: hover over the player, sweep a spotlight cone, and keep the heat on.
-export function makeHelicopter() {
+// NEON TIDE — helicopter.js
+// Helikopter polisi AIR-1 (baru di v4): muncul di wanted 4-5, mengunci pemain
+// dengan spotlight cone, rotor wash (partikel + goyangan kamera), dan
+// memperlambat penurunan wanted selama sorotan menempel.
+export function makeHeli() {
   return {
-    active: false, x: 0, y: 0, angle: 0, dist: 0,
-    spotOn: false, rotor: 0, sweepT: 0, bobT: 0,
+    x: 0, y: 0, angle: 0, active: false, rotorT: 0,
+    lockT: 0, name: 'AIR-1', hoverR: 170, speed: 260,
   };
 }
 
-export function updateHelicopter(G, dt) {
-  const h = G.heli;
+// Update helikopter: terbang di atas pemain, spotlight mengunci bila dekat.
+// Revisi: lockT meluruh pelan supaya indikator SPOTLIGHT tidak berkedip.
+export function updateHeli(G, dt) {
+  const heli = G.heli;
   const p = G.player;
-  if (G.wanted >= 4 && G.mode === 'play') {
-    if (!h.active) {
-      h.active = true;
-      h.x = p.x + 300;
-      h.y = p.y - 300;
+  if (G.wantedLevel >= 4 && G.mode === 'play') {
+    if (!heli.active) {
+      heli.active = true;
+      heli.x = p.x - 260;
+      heli.y = p.y - 260;
+      G.dialog = { name: 'PSPD Dispatch', role: 'Radio Polisi', text: 'AIR-1 di udara. Spotlight mengunci Marlowe — jangan sampai lolos.', t: 0 };
       G.audio.sfx('heli');
-      G.particles.popup(p.x, p.y - 60, 'AIR-1 ON SCENE', '#ff5d5d', true);
     }
-    h.bobT += dt;
-    h.rotor += dt * 30;
-    // The heli trails the player with a slow lag, never teleporting.
-    const tx = p.x + Math.sin(h.bobT * 0.7) * 90;
-    const ty = p.y + Math.cos(h.bobT * 0.5) * 90 - 40;
-    h.x += (tx - h.x) * Math.min(1, dt * 0.9);
-    h.y += (ty - h.y) * Math.min(1, dt * 0.9);
-    h.dist = Math.hypot(p.x - h.x, p.y - h.y);
-    h.angle = Math.atan2(p.y - h.y, p.x - h.x);
-    // Rotor wash: dust kicked up under the helicopter while it hovers low.
-    if (h.dist < 300 && Math.random() < dt * 8) {
-      G.particles.spawn(h.x + (Math.random() - 0.5) * 60, h.y + 30, { n: 1, speed: 50, life: 0.7, size: 6, color: '#b8a888' });
-    }
-    // Spotlight sweeps and locks on: once locked, heat cannot decay.
-    h.sweepT += dt;
-    const lock = Math.sin(h.sweepT * 0.8) > -0.2;
-    h.spotOn = lock && h.dist < 420;
-    if (h.spotOn && Math.random() < dt * 0.4) {
-      G.particles.popup(p.x, p.y - 46, 'SPOTLIGHT ON YOU', '#ffe066', false);
-    }
-  } else if (h.active) {
-    // Fly away and switch off when the heat drops.
-    h.x += Math.cos(h.angle) * -200 * dt;
-    h.y += -200 * dt;
-    h.rotor += dt * 20;
-    if (Math.hypot(h.x - p.x, h.y - p.y) > 900) { h.active = false; h.spotOn = false; }
+  } else if (heli.active && G.wantedLevel < 4) {
+    heli.active = false;
+    heli.lockT = 0;
   }
+  if (!heli.active) return;
+  heli.rotorT += dt;
+  // Terbang mendekat lalu hover melingkar di atas pemain.
+  const d = Math.hypot(p.x - heli.x, p.y - heli.y);
+  const want = Math.atan2(p.y - heli.y, p.x - heli.x);
+  let da = want - heli.angle;
+  while (da > Math.PI) da -= Math.PI * 2;
+  while (da < -Math.PI) da += Math.PI * 2;
+  heli.angle += da * Math.min(1, dt * 2);
+  if (d > heli.hoverR) {
+    heli.x += Math.cos(want) * heli.speed * dt;
+    heli.y += Math.sin(want) * heli.speed * dt;
+  } else {
+    // Orbit pelan di atas pemain.
+    const orbit = heli.rotorT * 0.35;
+    heli.x = p.x + Math.cos(orbit) * heli.hoverR;
+    heli.y = p.y + Math.sin(orbit) * heli.hoverR;
+  }
+  // Spotlight mengunci bila heli dalam 320px: wanted tidak turun.
+  if (d < 340) {
+    heli.lockT += dt;
+    G.lastSeenT = 0;
+    G.spotlightOn = true;
+  } else {
+    heli.lockT = Math.max(0, heli.lockT - dt);
+    G.spotlightOn = heli.lockT > 0.5;
+  }
+  // Rotor wash: partikel debu + goyangan halus saat heli dekat.
+  if (d < 420 && Math.random() < 0.5) {
+    G.particles.burst(p.x + (Math.random() - 0.5) * 120, p.y + (Math.random() - 0.5) * 120, 'dust', 1);
+  }
+  if (d < 260) G.shake = Math.max(G.shake, 1.5);
+}
+
+// Apakah spotlight sedang mengunci pemain (untuk HUD + render)?
+export function spotlightLocked(G) {
+  return !!(G.heli && G.heli.active && G.spotlightOn);
 }

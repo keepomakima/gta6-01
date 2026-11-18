@@ -1,84 +1,80 @@
-// NEON TIDE v4 — shops: the Ironworks gun shop and the safehouses.
-// One job: spending money on guns/ammo/armor, and healing + saving + swapping
-// cars at a safehouse.
-import { SHOP_ITEMS, WEAPONS, GUN_SHOP, SAFEHOUSES } from './config.js';
+// NEON TIDE — shops.js
+// Toko senjata Ironworks Arms (baru v4) + 2 safehouse (baru v4).
+// Toko: beli SMG / shotgun / ammo / armor dengan uang. Safehouse: heal penuh,
+// save ke localStorage, dan perbaiki mobil (garasi).
+import { SHOP_ITEMS, PLACES, WEAPONS } from './config.js';
+import { dist } from './random.js';
 
-export function nearGunShop(G) {
-  return Math.hypot(G.player.x - GUN_SHOP.x, G.player.y - GUN_SHOP.y) < 70;
+export function makeShop() {
+  return { open: false, selected: 0, message: '' };
 }
 
-export function nearSafehouse(G) {
-  for (const s of SAFEHOUSES) {
-    if (Math.hypot(G.player.x - s.x, G.player.y - s.y) < 70) return s;
+// Buka toko bila pemain dekat Ironworks Arms (E). Return true bila terbuka.
+export function tryOpenShop(G) {
+  const p = G.player;
+  if (dist(p.x, p.y, PLACES.gunShop.x, PLACES.gunShop.y) < 95) {
+    G.shop.open = true;
+    G.shop.selected = 0;
+    G.shop.message = 'Selamat datang di Ironworks Arms.';
+    G.audio.sfx('shop');
+    return true;
   }
-  return null;
+  return false;
 }
 
-export function openShop(G) {
-  G.shopOpen = true;
-  G.shopSel = 0;
-  G.audio.sfx('door');
-}
-
-// Shared ammo grant: shop purchases and (via combat drops) pickups both flow here.
-export function giveAmmo(G, weapon, n) {
-  G.player.ammo[weapon] = (G.player.ammo[weapon] ?? 0) + n;
-  return G.player.ammo[weapon];
-}
-
-export function closeShop(G) { G.shopOpen = false; }
-
+// Beli item yang sedang dipilih (Enter di toko). Revisi: beli senjata langsung
+// mengganti senjata aktif supaya bisa dipakai di combat tanpa buka menu lagi.
 export function buySelected(G) {
   const p = G.player;
-  const item = SHOP_ITEMS[G.shopSel];
-  if (!item) return 'NO ITEM';
-  if (p.money < item.price) return 'NOT ENOUGH CASH';
+  const item = SHOP_ITEMS[G.shop.selected];
+  if (!item) return;
+  if (p.money < item.price) {
+    G.shop.message = 'Uang tidak cukup untuk ' + item.label + '.';
+    G.audio.sfx('fail');
+    return;
+  }
+  p.money -= item.price;
   if (item.id === 'smg' || item.id === 'shotgun') {
-    if (p.owned[item.id]) return 'ALREADY OWNED';
-    p.money -= item.price;
     p.owned[item.id] = true;
-    p.ammo[item.id] = WEAPONS[item.id].mag * 2;
+    p.ammo[item.id] = WEAPONS[item.id].ammo;
     p.weapon = item.id;
-    G.audio.sfx('cash');
-    return `${WEAPONS[item.id].name.toUpperCase()} BOUGHT`;
+    G.shop.message = item.label + ' dibeli! Tekan ' + WEAPONS[item.id].slot + ' untuk memakai.';
+  } else if (item.id === 'ammo') {
+    p.ammo.pistol += 120;
+    p.ammo.smg += 240;
+    p.ammo.shotgun += 40;
+    G.shop.message = 'Ammo box dibeli: semua senjata terisi.';
+  } else if (item.id === 'armor') {
+    p.armor = 100;
+    G.shop.message = 'Kevlar vest dipakai. Armor 100.';
   }
-  if (item.id === 'ammo') {
-    if (p.weapon === 'fists') return 'EQUIP A GUN FIRST';
-    p.money -= item.price;
-    giveAmmo(G, p.weapon, 48);
-    G.audio.sfx('cash');
-    return '+48 AMMO';
-  }
-  if (item.id === 'armor') {
-    if (p.armor >= 100) return 'ARMOR FULL';
-    p.money -= item.price;
-    p.armor = Math.min(100, p.armor + 50);
-    G.audio.sfx('cash');
-    return '+50 ARMOR';
-  }
-  return 'SOLD';
+  G.audio.sfx('pickup');
 }
 
-export function shopItems() { return SHOP_ITEMS; }
-
-// Safehouse: heal to full, save the game, and swap the garage car.
-export function useSafehouse(G, house) {
+// Coba pakai safehouse (E): heal + save + perbaiki mobil. Return true bila kena.
+export function tryUseSafehouse(G) {
   const p = G.player;
-  p.hp = 100;
-  p.armor = Math.max(p.armor, 50);
-  G.saveGame();
-  G.particles.popup(p.x, p.y - 40, `${house.name.toUpperCase()} — HEALED + SAVED`, '#7dff8a', true);
-  G.audio.sfx('mission');
-  return house;
+  for (const key of ['safehouse1', 'safehouse2']) {
+    const s = PLACES[key];
+    if (dist(p.x, p.y, s.x, s.y) < 95) {
+      p.hp = 100;
+      p.armor = Math.max(p.armor, 50);
+      if (p.inCar) p.inCar.cond = 100;
+      G.saveGame();
+      G.dialog = { name: 'Deke Marlowe', role: 'Protagonis', text: 'Safehouse — ' + s.label + '. HP pulih, game tersimpan, mobil diperbaiki.', t: 0 };
+      G.audio.sfx('save');
+      return true;
+    }
+  }
+  return false;
 }
 
-export function cycleGarageCar(G) {
-  // The garage holds one car per mission milestone; cycling swaps the car
-  // parked outside the safehouse.
-  const unlocked = ['sedan'];
-  if (G.missionsDone >= 2) unlocked.push('sport');
-  if (G.missionsDone >= 6) unlocked.push('truck');
-  if (G.missionsDone >= 9) unlocked.push('taxi');
-  G.garageIdx = ((G.garageIdx ?? 0) + 1) % unlocked.length;
-  return unlocked[G.garageIdx];
+// Apakah pemain sedang dekat toko / safehouse (untuk prompt E di HUD)?
+export function nearbyInteractable(G) {
+  const p = G.player;
+  if (dist(p.x, p.y, PLACES.gunShop.x, PLACES.gunShop.y) < 95) return 'Toko Senjata — tekan E';
+  for (const key of ['safehouse1', 'safehouse2']) {
+    if (dist(p.x, p.y, PLACES[key].x, PLACES[key].y) < 95) return 'Safehouse — tekan E (heal + save)';
+  }
+  return null;
 }

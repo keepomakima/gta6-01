@@ -1,137 +1,148 @@
-// NEON TIDE v4 — audio: procedural WebAudio radio (3 original stations) + SFX.
-// One job: all sound. Nothing here loads a file; every note is synthesized.
-export class AudioSys {
+// NEON TIDE — audio.js
+// Radio WebAudio prosedural (3 station, musik orisinal) + SFX sintetis.
+// Semua suara dibuat dari oscillator/noise — tanpa file audio, tanpa network.
+// AudioContext dibuat malas (setelah gestur pertama) supaya tidak diblokir.
+export class GameAudio {
   constructor() {
     this.ctx = null;
     this.master = null;
-    this.radioOn = true;
     this.station = 0;
+    this.stations = ['Neon FM 101.9', 'Tide 98.4', 'Port Talk 870'];
     this.musicTimer = null;
-    this.step = 0;
     this.engineOsc = null;
     this.engineGain = null;
     this.muted = false;
   }
 
   ensure() {
-    if (this.ctx) return;
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+      return true;
+    }
     try {
-      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      this.ctx = new AC();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.5;
+      this.master.gain.value = 0.35;
       this.master.connect(this.ctx.destination);
-    } catch { this.ctx = null; }
+      this.startRadio();
+      this.startEngineHum();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  resume() { this.ensure(); if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
-
-  toggleMute() {
-    this.muted = !this.muted;
-    if (this.master) this.master.gain.value = this.muted ? 0 : 0.5;
-    return this.muted;
-  }
-
-  stationName() {
-    return ['NEON FM 88.2', 'TIDE WAVE 101.5', 'HARBOR TALK 94.0'][this.station];
-  }
+  stationName() { return this.stations[this.station]; }
 
   nextStation() {
-    this.station = (this.station + 1) % 3;
-    this.step = 0;
-    return this.stationName();
+    this.station = (this.station + 1) % this.stations.length;
+    if (this.ctx) this.sfx('station');
+    return this.stations[this.station];
   }
 
-  // A tiny step sequencer: each station has its own chord roots + tempo.
+  // Radio: jadwalkan not synthwave / chill / talk-blip per station.
+  // Revisi: interval 240ms, nada dipilih dari tangga nada station aktif.
   startRadio() {
-    this.ensure();
     if (!this.ctx || this.musicTimer) return;
-    const roots = [
-      [55, 65.41, 49, 58.27], // Neon FM: moody synthwave A minor
-      [73.42, 87.31, 65.41, 98], // Tide Wave: breezy major
-      [82.41, 110, 98, 123.47], // Harbor Talk: low talk-bed pulse
+    const scales = [
+      [220, 261.6, 329.6, 392, 440, 523.3], // Neon FM: arpeggio minor cerah
+      [196, 246.9, 293.7, 392, 493.9],      // Tide 98: chord lembut
+      [330, 330, 392, 330, 262],            // Port Talk: blip percakapan
     ];
-    const bpm = [96, 112, 78][this.station];
-    const stepMs = (60 / bpm / 2) * 1000;
+    let step = 0;
     this.musicTimer = setInterval(() => {
-      if (!this.ctx || !this.radioOn || this.muted) return;
-      const root = roots[this.station][Math.floor(this.step / 8) % 4];
-      const scale = [1, 1.189, 1.335, 1.498, 1.782, 2];
-      const note = root * 4 * scale[this.step % scale.length];
-      this.blip(note, 0.14, this.station === 2 ? 'sine' : 'triangle', 0.05);
-      if (this.step % 4 === 0) this.blip(root * 2, 0.3, 'sine', 0.07);
-      if (this.step % 8 === 4) this.blip(root * 3, 0.18, 'square', 0.02);
-      this.step += 1;
-    }, stepMs);
+      if (!this.ctx || this.muted) return;
+      const scale = scales[this.station];
+      const note = scale[step % scale.length];
+      step += 1;
+      const dur = this.station === 2 ? 0.08 : 0.22;
+      this.tone(note, dur, this.station === 0 ? 'sawtooth' : 'sine', 0.05);
+      if (this.station === 0 && step % 4 === 0) this.tone(note / 2, 0.3, 'triangle', 0.07);
+      if (this.station === 1 && step % 8 === 0) this.tone(note * 2, 0.5, 'sine', 0.04);
+    }, 240);
   }
 
-  stopRadio() { if (this.musicTimer) { clearInterval(this.musicTimer); this.musicTimer = null; } }
-
-  blip(freq, dur, type = 'sine', vol = 0.08) {
-    if (!this.ctx || this.muted) return;
-    const o = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    o.type = type;
-    o.frequency.value = freq;
-    g.gain.setValueAtTime(vol, this.ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
-    o.connect(g);
-    g.connect(this.master);
-    o.start();
-    o.stop(this.ctx.currentTime + dur);
+  // Dengung mesin: pitch mengikuti kecepatan mobil pemain (diatur main loop).
+  startEngineHum() {
+    if (!this.ctx || this.engineOsc) return;
+    try {
+      this.engineOsc = this.ctx.createOscillator();
+      this.engineOsc.type = 'sawtooth';
+      this.engineOsc.frequency.value = 40;
+      this.engineGain = this.ctx.createGain();
+      this.engineGain.gain.value = 0.0;
+      const filt = this.ctx.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = 400;
+      this.engineOsc.connect(filt);
+      filt.connect(this.engineGain);
+      this.engineGain.connect(this.master);
+      this.engineOsc.start();
+    } catch { /* abaikan */ }
   }
 
-  noise(dur, vol = 0.12, lowpass = 1200) {
-    if (!this.ctx || this.muted) return;
-    const len = Math.floor(this.ctx.sampleRate * dur);
-    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    const f = this.ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.value = lowpass;
-    const g = this.ctx.createGain();
-    g.gain.value = vol;
-    src.connect(f); f.connect(g); g.connect(this.master);
-    src.start();
+  setEngine(speed01) {
+    if (!this.ctx || !this.engineOsc) return;
+    this.engineOsc.frequency.value = 40 + speed01 * 140;
+    this.engineGain.gain.value = speed01 > 0.02 ? 0.03 + speed01 * 0.05 : 0.0;
+  }
+
+  tone(freq, dur, type = 'sine', vol = 0.1) {
+    if (!this.ctx) return;
+    try {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol, this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
+      o.connect(g); g.connect(this.master);
+      o.start(); o.stop(this.ctx.currentTime + dur);
+    } catch { /* abaikan */ }
+  }
+
+  noise(dur, vol = 0.15, freq = 1200) {
+    if (!this.ctx) return;
+    try {
+      const len = Math.floor(this.ctx.sampleRate * dur);
+      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i += 1) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const filt = this.ctx.createBiquadFilter();
+      filt.type = 'lowpass'; filt.frequency.value = freq;
+      const g = this.ctx.createGain();
+      g.gain.value = vol;
+      src.connect(filt); filt.connect(g); g.connect(this.master);
+      src.start();
+    } catch { /* abaikan */ }
   }
 
   sfx(name) {
     if (!this.ctx) return;
-    if (name === 'shot') this.noise(0.12, 0.25, 3000);
-    else if (name === 'punch') this.noise(0.08, 0.2, 900);
-    else if (name === 'pickup') { this.blip(660, 0.1, 'sine', 0.1); setTimeout(() => this.blip(990, 0.14, 'sine', 0.1), 70); }
-    else if (name === 'cash') { this.blip(880, 0.08, 'square', 0.05); setTimeout(() => this.blip(1320, 0.12, 'square', 0.05), 60); }
-    else if (name === 'siren') { this.blip(740, 0.35, 'sawtooth', 0.04); setTimeout(() => this.blip(988, 0.35, 'sawtooth', 0.04), 350); }
-    else if (name === 'crash') this.noise(0.3, 0.3, 700);
-    else if (name === 'mission') { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.blip(f, 0.22, 'triangle', 0.09), i * 110)); }
-    else if (name === 'fail') { [392, 330, 262].forEach((f, i) => setTimeout(() => this.blip(f, 0.25, 'sawtooth', 0.06), i * 130)); }
-    else if (name === 'door') this.blip(220, 0.12, 'square', 0.06);
-    else if (name === 'horn') { this.blip(330, 0.18, 'square', 0.06); setTimeout(() => this.blip(330, 0.18, 'square', 0.06), 200); }
-    else if (name === 'heli') this.noise(0.5, 0.05, 400);
-  }
-
-  engineStart() {
-    this.ensure();
-    if (!this.ctx || this.engineOsc) return;
-    this.engineOsc = this.ctx.createOscillator();
-    this.engineOsc.type = 'sawtooth';
-    this.engineOsc.frequency.value = 55;
-    this.engineGain = this.ctx.createGain();
-    this.engineGain.gain.value = 0.0;
-    this.engineOsc.connect(this.engineGain);
-    this.engineGain.connect(this.master);
-    this.engineOsc.start();
-  }
-
-  engineSet(speedNorm) {
-    if (!this.engineOsc) return;
-    this.engineOsc.frequency.value = 55 + speedNorm * 110;
-    this.engineGain.gain.value = this.muted ? 0 : 0.02 + speedNorm * 0.035;
-  }
-
-  engineStop() {
-    if (this.engineOsc) { try { this.engineOsc.stop(); } catch {} this.engineOsc = null; this.engineGain = null; }
+    switch (name) {
+      case 'shot': this.noise(0.12, 0.25, 3000); this.tone(180, 0.08, 'square', 0.12); break;
+      case 'shotFar': this.noise(0.1, 0.08, 1800); break;
+      case 'punch': this.noise(0.08, 0.2, 500); break;
+      case 'crash': this.noise(0.25, 0.3, 700); break;
+      case 'horn': this.tone(370, 0.25, 'square', 0.08); this.tone(466, 0.25, 'square', 0.06); break;
+      case 'siren': this.tone(660, 0.4, 'sine', 0.07); setTimeout(() => this.tone(880, 0.4, 'sine', 0.07), 420); break;
+      case 'heli': this.noise(0.8, 0.06, 300); break;
+      case 'pickup': this.tone(660, 0.09, 'sine', 0.12); setTimeout(() => this.tone(990, 0.12, 'sine', 0.12), 90); break;
+      case 'door': this.noise(0.08, 0.12, 900); break;
+      case 'mission': this.tone(523, 0.12, 'triangle', 0.12); setTimeout(() => this.tone(784, 0.2, 'triangle', 0.12), 130); break;
+      case 'fanfare': [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.tone(f, 0.22, 'triangle', 0.14), i * 140)); break;
+      case 'fail': this.tone(220, 0.3, 'sawtooth', 0.1); setTimeout(() => this.tone(165, 0.4, 'sawtooth', 0.1), 200); break;
+      case 'hurt': this.tone(140, 0.15, 'sawtooth', 0.12); break;
+      case 'kill': this.tone(392, 0.1, 'square', 0.08); break;
+      case 'busted': [440, 349, 294].forEach((f, i) => setTimeout(() => this.tone(f, 0.25, 'sawtooth', 0.1), i * 180)); break;
+      case 'wasted': [330, 262, 196, 131].forEach((f, i) => setTimeout(() => this.tone(f, 0.35, 'sawtooth', 0.1), i * 220)); break;
+      case 'shop': this.tone(880, 0.1, 'sine', 0.1); setTimeout(() => this.tone(1175, 0.15, 'sine', 0.1), 100); break;
+      case 'save': this.tone(784, 0.12, 'sine', 0.1); setTimeout(() => this.tone(1047, 0.18, 'sine', 0.1), 120); break;
+      case 'empty': this.tone(220, 0.06, 'square', 0.08); break;
+      case 'station': this.tone(1047, 0.08, 'sine', 0.08); break;
+      default: break;
+    }
   }
 }

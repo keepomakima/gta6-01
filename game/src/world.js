@@ -1,133 +1,138 @@
-// NEON TIDE v4 — world: Port Solano itself. Roads, blocks, buildings, beach,
-// harbor, props, palms, neon signs. One job: generate the city and answer
-// collision queries against it.
-import { WORLD_W, WORLD_H, districtAt } from './config.js';
+// NEON TIDE — world.js
+// Kota Port Solano 2400x1600: grid jalan, blok bangunan, distrik, pantai,
+// pelabuhan, taman, palem beachfront, papan neon bernama, dan gedung khusus
+// (klub Kestrel, garasi Rosa, toko Ironworks Arms, safehouse, vault, hospital).
+// Semua posisi penting ada di jalan atau area terbuka — tidak ada di gedung.
+import { WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_HALF, DISTRICTS, PLACES } from './config.js';
+import { mulberry32, randInt, randRange } from './random.js';
 
-// Road centrelines: verticals and horizontals every ~400 px.
-export const ROADS_X = [220, 620, 1020, 1420, 1820, 2220];
-export const ROADS_Y = [220, 520, 820, 1120, 1420, 1680];
-export const ROAD_HALF = 34;
+// Blok yang sengaja dibiarkan terbuka (taman / plaza / dermaga), tanpa gedung.
+// Format: [x0, y0, x1, y1]. Revisi: blok Palm Court (fare C) + container yard
+// dicek ulang terhadap koordinat playtest — semuanya di area terbuka.
+const OPEN_BLOCKS = [
+  [365, 1065, 575, 1175],   // Palm Court park — fare C (420,1120)
+  [965, 865, 1175, 975],    // Rival Corner plaza — misi 5
+  [1565, 1375, 2165, 1600], // Container yard pelabuhan — crate misi 10
+  [0, 1465, 2400, 1600],    // Dermaga selatan — vault (320,1560)
+  [2165, 0, 2400, 1600],    // Pantai timur — boss arena (2380,1300)
+  [365, 265, 575, 375],     // Halaman Kestrel Club
+];
 
-export function isOnRoad(x, y) {
-  for (const rx of ROADS_X) if (Math.abs(x - rx) < ROAD_HALF + 14) return true;
-  for (const ry of ROADS_Y) if (Math.abs(y - ry) < ROAD_HALF + 14) return true;
-  return false;
+function inOpen(x0, y0, x1, y1) {
+  return OPEN_BLOCKS.some(([a, b, c, d]) => x0 >= a && y0 >= b && x1 <= c && y1 <= d);
 }
 
-export function nearestRoadPoint(x, y) {
-  let bx = x; let by = y; let bd = Infinity;
-  for (const rx of ROADS_X) {
-    const d = Math.abs(x - rx);
-    if (d < bd) { bd = d; bx = rx; by = y; }
-  }
-  for (const ry of ROADS_Y) {
-    const d = Math.abs(y - ry);
-    if (d < bd) { bd = d; bx = x; by = ry; }
-  }
-  return { x: bx, y: by };
-}
-
-export function buildWorld(rng) {
+export function buildWorld(seed = 20261118) {
+  const rng = mulberry32(seed);
   const buildings = [];
-  const props = [];
-  const palms = [];
-  const signs = [];
-  const containers = [];
-  const blockW = 400;
-  const blockH = 300;
-
-  // Buildings fill the blocks between roads; the beach strip and harbor
-  // yard stay open. Each building gets lit windows and a neon sign downtown.
-  for (let bx = 0; bx < 6; bx += 1) {
-    for (let by = 0; by < 5; by += 1) {
-      const x0 = 260 + bx * 400;
-      const y0 = 260 + by * 300;
-      if (x0 > 2240) continue; // beachfront strip: palms + boardwalk, no blocks
-      if (by === 4 && bx < 2) continue; // harbor yard: containers instead
-      const d = districtAt(x0 + 100, y0 + 100);
-      const tall = d.name === 'DOWNTOWN';
-      const n = tall ? 2 : rng.int(1, 3);
-      for (let i = 0; i < n; i += 1) {
-        const bw = rng.range(70, 130);
-        const bh = rng.range(60, 110);
-        // Keep buildings clear of the road bands: the next road centre is
-        // 360 px right / 260 px down from the block origin, its band 40 px
-        // wide, so a building must end at most 320 px right / 220 px down.
-        const px = x0 + rng.range(10, Math.max(11, 320 - bw));
-        const py = y0 + rng.range(10, Math.max(11, 220 - bh));
-        const palette = ['#3d5a80', '#6d6875', '#8d6b9e', '#2f3e46', '#7f4f24', '#4a6fa5', '#5c6650'];
-        buildings.push({
-          x: px, y: py, w: bw, h: bh,
-          color: rng.pick(palette),
-          tall,
-          roof: rng.pick(['#2b2d42', '#3a3a3a', '#465362']),
-          windows: rng.int(6, 18),
-          lit: rng.range(0.3, 0.8),
-        });
-      }
-      if (tall && rng.chance(0.7)) {
-        signs.push({
-          x: x0 + rng.range(20, 300), y: y0 + rng.range(20, 240),
-          text: rng.pick(['NEON', 'TIDE', 'KESTREL', 'PIER 9', 'SOLANO', 'BAR 88', 'HOTEL', 'CASINO']),
-          color: rng.pick(['#ff5d8f', '#39c6ff', '#ffd166', '#7dff8a', '#ff7ad9']),
-        });
-      }
-      // Street props: lamps, hydrants, planters along the block edge.
-      const np = rng.int(2, 5);
-      for (let i = 0; i < np; i += 1) {
-        props.push({
-          x: x0 + rng.range(0, 360), y: y0 + rng.range(0, 260),
-          kind: rng.pick(['lamp', 'hydrant', 'planter', 'bench', 'bin']),
-        });
-      }
+  // Satu gedung per blok (kadang dua gedung kecil), inset dari tepi blok.
+  for (let vi = 0; vi <= ROADS_V.length; vi += 1) {
+    const x0 = vi === 0 ? 0 : ROADS_V[vi - 1] + ROAD_HALF;
+    const x1 = vi === ROADS_V.length ? WORLD_W : ROADS_V[vi] - ROAD_HALF;
+    for (let hi = 0; hi <= ROADS_H.length; hi += 1) {
+      const y0 = hi === 0 ? 0 : ROADS_H[hi - 1] + ROAD_HALF;
+      const y1 = hi === ROADS_H.length ? WORLD_H : ROADS_H[hi] - ROAD_HALF;
+      if (x1 - x0 < 90 || y1 - y0 < 70) continue;
+      if (inOpen(x0, y0, x1, y1)) continue;
+      const downtown = x0 >= 920 && x1 <= 1865 && y0 >= 175 && y1 <= 865;
+      const tall = downtown && rng() < 0.55;
+      const bw = randRange(rng, (x1 - x0) * 0.45, (x1 - x0) * 0.8);
+      const bh = randRange(rng, (y1 - y0) * 0.45, (y1 - y0) * 0.8);
+      const bx = x0 + (x1 - x0 - bw) / 2 + randRange(rng, -8, 8);
+      const by = y0 + (y1 - y0 - bh) / 2 + randRange(rng, -6, 6);
+      buildings.push({
+        x: bx, y: by, w: bw, h: bh,
+        tall,
+        hue: randInt(rng, 0, 5),
+        litSeed: randInt(rng, 1, 99999),
+        label: tall ? 'TOWER' : '',
+      });
     }
   }
 
-  // Harbor containers, stacked in rows.
+  // Gedung khusus bernama (digambar dengan papan neon di render.js).
+  const landmarks = [
+    { id: 'club', x: 680, y: 270, w: 170, h: 90, name: 'KESTREL', color: '#ff2e88' },
+    { id: 'garage', x: 1280, y: 665, w: 170, h: 95, name: "ROSA'S GARAGE", color: '#22e6ff' },
+    { id: 'gunshop', x: 990, y: 665, w: 150, h: 90, name: 'IRONWORKS ARMS', color: '#ffc233' },
+    { id: 'safehouse1', x: 390, y: 480, w: 130, h: 80, name: 'PALM COURT', color: '#7dff8a' },
+    { id: 'safehouse2', x: 2165, y: 540, w: 120, h: 75, name: 'BEACH HOUSE', color: '#7dff8a' },
+    { id: 'stash', x: 1880, y: 1080, w: 150, h: 80, name: 'STASH', color: '#ff5a3c' },
+    { id: 'hospital', x: 1400, y: 120, w: 170, h: 85, name: 'SOLANO GENERAL', color: '#ffffff' },
+    { id: 'police', x: 680, y: 940, w: 150, h: 85, name: 'PSPD CENTRAL', color: '#4d8dff' },
+    { id: 'motel', x: 2165, y: 1080, w: 130, h: 80, name: 'NEON TIDE MOTEL', color: '#ff2e88' },
+  ];
+  for (const lm of landmarks) {
+    buildings.push({ x: lm.x, y: lm.y, w: lm.w, h: lm.h, tall: false, hue: 2, litSeed: 7, label: lm.name, landmark: lm.id });
+  }
+
+  // Palem di beachfront (jalur x > 2180) dan sekitar Palm Court.
+  const palms = [];
   for (let i = 0; i < 26; i += 1) {
+    palms.push({ x: randRange(rng, 2190, 2380), y: randRange(rng, 60, 1540), s: randRange(rng, 0.8, 1.3) });
+  }
+  for (let i = 0; i < 8; i += 1) {
+    palms.push({ x: randRange(rng, 380, 560), y: randRange(rng, 1080, 1160), s: randRange(rng, 0.8, 1.2) });
+  }
+
+  // Kontainer pelabuhan di container yard.
+  const containers = [];
+  for (let i = 0; i < 22; i += 1) {
     containers.push({
-      x: 300 + (i % 8) * 90 + rng.range(-8, 8),
-      y: 1500 + Math.floor(i / 8) * 55 + rng.range(-6, 6),
-      w: 78, h: 44,
-      color: rng.pick(['#e07a5f', '#81b29a', '#f2cc8f', '#3d8bfd', '#b5838d']),
+      x: randRange(rng, 1600, 2100), y: randRange(rng, 1400, 1560),
+      w: 64, h: 26, color: ['#c94f2e', '#2e7fc9', '#c9a52e', '#3fae5a'][i % 4],
+      rot: rng() < 0.5 ? 0 : Math.PI / 2,
     });
   }
 
-  // Beachfront palms along the boardwalk and the sand.
-  for (let i = 0; i < 34; i += 1) {
-    palms.push({
-      x: rng.range(2280, 2560),
-      y: 140 + i * 48 + rng.range(-12, 12),
-      lean: rng.range(-0.3, 0.3),
-      size: rng.range(0.8, 1.3),
-    });
-  }
-  for (let i = 0; i < 10; i += 1) {
-    palms.push({ x: rng.range(2000, 2220), y: rng.range(200, 1600), lean: rng.range(-0.3, 0.3), size: rng.range(0.8, 1.2) });
-  }
+  // Lampu jalan di tiap persimpangan (dipakai glow malam).
+  const lamps = [];
+  for (const vx of ROADS_V) for (const hy of ROADS_H) lamps.push({ x: vx + 52, y: hy - 52 });
 
-  return { buildings, props, palms, signs, containers };
+  return { buildings, landmarks, palms, containers, lamps, seed };
 }
 
-export function rectBlocked(world, x, y, r) {
-  for (const b of world.buildings) {
-    if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) return true;
-  }
-  for (const c of world.containers) {
-    if (x + r > c.x && x - r < c.x + c.w && y + r > c.y && y - r < c.y + c.h) return true;
-  }
-  if (x < 20 + r || x > WORLD_W - 20 - r || y < 20 + r || y > WORLD_H - 20 - r) return true;
+// Apakah titik (x,y) berada di jalan (aspal)?
+export function onRoad(x, y) {
+  for (const vx of ROADS_V) if (Math.abs(x - vx) <= ROAD_HALF) return true;
+  for (const hy of ROADS_H) if (Math.abs(y - hy) <= ROAD_HALF) return true;
   return false;
 }
 
-export function pointBlocked(world, x, y, r) { return rectBlocked(world, x, y, r); }
-
-// Two axle points (front/back) so a car can slide along a wall instead of
-// sticking on its centre circle.
-export function carBlocked(world, x, y, angle, halfLen, halfWid) {
-  const fx = x + Math.cos(angle) * halfLen;
-  const fy = y + Math.sin(angle) * halfLen;
-  const bx = x - Math.cos(angle) * halfLen;
-  const by = y - Math.sin(angle) * halfLen;
-  return rectBlocked(world, fx, fy, halfWid + 2) || rectBlocked(world, bx, by, halfWid + 2);
+// Tabrakan lingkaran vs gedung: true bila titik (x,y,r) menyentuh gedung.
+export function hitsBuilding(world, x, y, r) {
+  for (const b of world.buildings) {
+    const cx = Math.max(b.x, Math.min(x, b.x + b.w));
+    const cy = Math.max(b.y, Math.min(y, b.y + b.h));
+    const dx = x - cx, dy = y - cy;
+    if (dx * dx + dy * dy < r * r) return b;
+  }
+  return null;
 }
+
+// Nama distrik untuk titik (x,y). Beachfront & Harbor dicek dulu (overlap).
+export function districtAt(x, y) {
+  if (x >= 2075) return 'Beachfront';
+  if (y >= 1375) return 'Harbor';
+  for (const d of DISTRICTS) {
+    if (d.name === 'Beachfront' || d.name === 'Harbor') continue;
+    if (x >= d.x0 && x < d.x1 && y >= d.y0 && y < d.y1) return d.name;
+  }
+  return 'Suburbs';
+}
+
+// Titik jalan terdekat dari (x,y) — dipakai respawn & penempatan aman.
+export function nearestRoadPoint(x, y) {
+  let best = null, bd = Infinity;
+  for (const vx of ROADS_V) {
+    const d = Math.abs(x - vx);
+    if (d < bd) { bd = d; best = { x: vx, y }; }
+  }
+  for (const hy of ROADS_H) {
+    const d = Math.abs(y - hy);
+    if (d < bd) { bd = d; best = { x, y: hy }; }
+  }
+  return best;
+}
+
+export { PLACES };

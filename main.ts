@@ -1,13 +1,8 @@
-// NEON TIDE v4 — entrypoint (Node 22, standard library only).
-// The program hands the game in: it copies this directory's game/ folder and
-// screenshots/ to /output and writes /output/dossier.json with the vendored
-// make.fun library, exactly as the starter's main.ts does. Nothing else.
-// v4 rebuilds the whole open world fresh (12 missions, helicopter, gun shop,
-// safehouses, full HUD) — the dossier below is built from that code alone.
-// Serve the game locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-
+// NEON TIDE — main.ts (entrypoint gta6-01, Node 22, stdlib only).
+// Menyalin game/ + screenshots/ dari repo ke /output (atau MAKEFUN_OUTPUT_DIR)
+// lalu menulis /output/dossier.json dengan buildDossier dari vendor kit.
+// Ditulis fresh di sesi builder ini; pola mengikuti starter kit main.ts.
+// Revisi: guard existsSync untuk screenshots/ supaya run tetap jalan.
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,12 +14,12 @@ const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+if (existsSync(join(here, 'screenshots'))) {
+  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+}
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the
-// bytes; the others refuse an entry the scorer would refuse (more than 4
-// screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of
-// game files, in all, or a path under game/ over 1000 bytes).
+// Caps gate: teks dossier 160 KiB, maks 4 screenshot @256 KiB,
+// game maks 993 file / 48 MiB / path 1000 byte.
 writeFileSync(
   join(out, 'dossier.json'),
   buildDossier(out, {

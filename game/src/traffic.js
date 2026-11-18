@@ -1,106 +1,141 @@
-// NEON TIDE v4 — traffic: AI cars that follow the road grid and pedestrians
-// who stroll the sidewalks and flee from gunfire and crashes.
-// One job: ambient city life that reacts to the player.
-import { ROADS_X, ROADS_Y, isOnRoad } from './world.js';
-import { makeCar } from './entities.js';
+// NEON TIDE — traffic.js
+// Lalu lintas Port Solano: mobil AI mengikuti jalan (lajur kanan, belok di
+// persimpangan, berhenti bila ada mobil di depan), pejalan kaki di trotoar
+// yang lari ketakutan saat ada tembakan atau tabrakan di dekatnya. Klakson
+// saat pemain menghalangi jalan.
+import { ROADS_V, ROADS_H, WORLD_W, WORLD_H, CAR_TYPES } from './config.js';
+import { clamp, dist, pick } from './random.js';
+import { makeCar, makePed, clampToWorld } from './entities.js';
 
-export function spawnTrafficCars(world, rng, count) {
-  const cars = [];
-  const types = ['sedan', 'taxi', 'truck', 'sedan', 'taxi'];
-  for (let i = 0; i < count; i += 1) {
-    const vertical = rng.chance(0.5);
-    let x; let y; let angle;
+const TRAFFIC_TYPES = ['sedan', 'sedan', 'taxi', 'truck', 'sport'];
+
+export function spawnTraffic(G, n = 14) {
+  const rng = G.rng;
+  for (let i = 0; i < n; i += 1) {
+    const vertical = rng() < 0.5;
+    const type = pick(rng, TRAFFIC_TYPES);
+    let x, y, angle;
     if (vertical) {
-      const rx = rng.pick(ROADS_X);
-      x = rx + (rng.chance(0.5) ? 12 : -12);
-      y = rng.range(100, 1700);
-      angle = rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2;
+      const vx = pick(rng, ROADS_V);
+      const lane = rng() < 0.5 ? -22 : 22;
+      x = vx + lane; y = rng() * WORLD_H;
+      angle = lane < 0 ? Math.PI / 2 : -Math.PI / 2;
     } else {
-      const ry = rng.pick(ROADS_Y);
-      x = rng.range(100, 2400);
-      y = ry + (rng.chance(0.5) ? 12 : -12);
-      angle = rng.chance(0.5) ? 0 : Math.PI;
+      const hy = pick(rng, ROADS_H);
+      const lane = rng() < 0.5 ? -22 : 22;
+      x = rng() * WORLD_W; y = hy + lane;
+      angle = lane < 0 ? 0 : Math.PI;
     }
-    const car = makeCar(types[i % types.length], x, y, angle, 'ai');
-    car.speed = rng.range(90, 150);
-    cars.push(car);
+    const car = makeCar(type, x, y, angle, { ai: { vertical, road: vertical ? x : y, speed: CAR_TYPES[type].top * 0.55 } });
+    G.cars.push(car);
   }
-  return cars;
 }
 
+export function spawnPeds(G, n = 22) {
+  const rng = G.rng;
+  for (let i = 0; i < n; i += 1) {
+    const vertical = rng() < 0.5;
+    let x, y;
+    if (vertical) {
+      x = pick(rng, ROADS_V) + (rng() < 0.5 ? -58 : 58);
+      y = rng() * WORLD_H;
+    } else {
+      x = rng() * WORLD_W;
+      y = pick(rng, ROADS_H) + (rng() < 0.5 ? -58 : 58);
+    }
+    G.peds.push(makePed(clamp(x, 20, WORLD_W - 20), clamp(y, 20, WORLD_H - 20), rng));
+  }
+}
+
+// Mobil AI: jalan lurus di lajurnya, belok acak di persimpangan, rem bila
+// ada kendaraan di depan, klakson bila pemain menghalangi. Revisi: belok
+// hanya di persimpangan (onCross) supaya tidak keluar jalur di tengah jalan.
 export function updateTraffic(G, dt) {
   const p = G.player;
   for (const car of G.cars) {
-    if (car.driver !== 'ai') continue;
-    // Keep to the road: if it drifted off, steer back to the nearest road line.
-    if (!isOnRoad(car.x, car.y)) {
-      const target = Math.atan2(900 - car.y, 1300 - car.x);
-      car.angle += Math.sin(target - car.angle) * 1.5 * dt;
+    if (!car.ai || car === p.inCar) continue;
+    const ai = car.ai;
+    // Belok di persimpangan (peluang kecil per detik).
+    const onCrossV = ROADS_V.some((vx) => Math.abs(car.x - vx) < 6);
+    const onCrossH = ROADS_H.some((hy) => Math.abs(car.y - hy) < 6);
+    if ((onCrossV || onCrossH) && G.rng() < dt * 0.25) {
+      const turn = G.rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
+      car.angle += turn;
+      ai.vertical = Math.abs(Math.sin(car.angle)) > 0.5;
     }
-    // Slow for the car ahead and for the player in the way.
-    let slow = false;
+    // Rem bila ada mobil / pemain di depan dalam 70px.
+    const fx = car.x + Math.cos(car.angle) * 60;
+    const fy = car.y + Math.sin(car.angle) * 60;
+    let blocked = false;
     for (const other of G.cars) {
-      if (other === car) continue;
-      const dx = other.x - car.x;
-      const dy = other.y - car.y;
-      const d = Math.hypot(dx, dy);
-      const ahead = Math.cos(car.angle) * dx + Math.sin(car.angle) * dy;
-      if (d < 70 && ahead > 0) { slow = true; break; }
+      if (other !== car && dist(fx, fy, other.x, other.y) < 42) { blocked = true; break; }
     }
-    const dp = Math.hypot(p.x - car.x, p.y - car.y);
-    if (dp < 60 && p.onFoot) {
-      slow = true;
-      if (Math.random() < dt * 0.4) G.audio.sfx('horn'); // stuck behind a pedestrian
+    if (dist(fx, fy, p.x, p.y) < 36) {
+      blocked = true;
+      car.hornT -= dt;
+      if (car.hornT <= 0) { car.hornT = 2.5; G.audio.sfx('horn'); }
     }
-    const targetSpeed = slow ? 0 : 130;
-    car.speed += (targetSpeed - car.speed) * Math.min(1, dt * 1.5);
-    const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-    const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-    car.x = nx; car.y = ny;
-    // Wrap around the map edges so traffic never runs out.
-    if (car.x < 60) { car.x = 2540; }
-    if (car.x > 2540) { car.x = 60; }
-    if (car.y < 60) { car.y = 1740; }
-    if (car.y > 1740) { car.y = 60; }
-    // Near miss: player in a fast car passes close to traffic.
-    if (p.inCar && Math.abs(p.inCar.speed) > 260 && dp > 24 && dp < 46) {
-      if (!car.nearMissCd || car.nearMissCd <= 0) {
-        car.nearMissCd = 3;
-        p.nearMisses += 1;
-        p.money += 250;
-        G.particles.popup(p.x, p.y - 40, 'NEAR MISS +$250', '#7dff8a', true);
-        G.audio.sfx('cash');
-      }
+    const target = blocked ? 0 : ai.speed;
+    car.speed += (target - car.speed) * Math.min(1, dt * 1.5);
+    car.x += Math.cos(car.angle) * car.speed * dt;
+    car.y += Math.sin(car.angle) * car.speed * dt;
+    // Keluar ujung dunia -> muncul lagi di ujung berlawanan (lalu lintas abadi).
+    if (car.x < -60) car.x = WORLD_W + 50;
+    if (car.x > WORLD_W + 60) car.x = -50;
+    if (car.y < -60) car.y = WORLD_H + 50;
+    if (car.y > WORLD_H + 60) car.y = -50;
+    // Near miss: pemain ngebut melewati traffic dengan jarak dekat.
+    if (p.inCar && Math.abs(p.inCar.speed) > 300) {
+      const d = dist(car.x, car.y, p.x, p.y);
+      if (d < 55 && !car.nearMissed) {
+        car.nearMissed = true;
+        p.nearMissScore += 1;
+        if (p.nearMissScore % 2 === 1) {
+          G.popups.push({ text: 'NEAR MISS +$40', amount: 40, t: 0, x: p.x, y: p.y - 30 });
+          p.money += 40;
+        }
+      } else if (d > 120) car.nearMissed = false;
     }
-    if (car.nearMissCd > 0) car.nearMissCd -= dt;
   }
 }
 
-export function updatePedestrians(G, dt) {
+// Pejalan kaki: jalan santai di trotoar, lari bila ada tembakan/tabrak dekat.
+export function updatePeds(G, dt) {
   const p = G.player;
+  const gunshot = G.combat.shotsFiredT > 0;
   for (const ped of G.peds) {
-    if (!ped.alive) continue;
-    const dp = Math.hypot(p.x - ped.x, p.y - ped.y);
-    if (dp < 150 && (G.combatNoise > 0 || (p.inCar && Math.abs(p.inCar.speed) > 200))) {
-      ped.panic = 2.5;
-    }
-    if (ped.panic > 0) {
-      ped.panic -= dt;
+    const dPlayer = dist(ped.x, ped.y, p.x, p.y);
+    if (gunshot && dPlayer < 380) ped.fleeT = 2.5;
+    if (p.inCar && Math.abs(p.inCar.speed) > 200 && dPlayer < 90) ped.fleeT = 2;
+    if (ped.fleeT > 0) {
+      ped.fleeT -= dt;
       const away = Math.atan2(ped.y - p.y, ped.x - p.x);
-      ped.x += Math.cos(away) * 130 * dt;
-      ped.y += Math.sin(away) * 130 * dt;
-      ped.angle = away;
+      ped.x += Math.cos(away) * 150 * dt;
+      ped.y += Math.sin(away) * 150 * dt;
     } else {
-      ped.wanderT -= dt;
-      if (ped.wanderT <= 0) {
-        ped.wanderT = 2 + Math.random() * 3;
-        ped.angle = Math.random() * Math.PI * 2;
-      }
       ped.x += Math.cos(ped.angle) * ped.speed * dt;
       ped.y += Math.sin(ped.angle) * ped.speed * dt;
-      if (!isOnRoad(ped.x, ped.y) && Math.random() < dt * 0.5) ped.angle += Math.PI / 2;
+      if (G.rng() < dt * 0.1) ped.angle += (G.rng() - 0.5) * 1.6;
     }
-    ped.x = Math.max(30, Math.min(2570, ped.x));
-    ped.y = Math.max(30, Math.min(1770, ped.y));
+    // Tetap di trotoar: bila masuk jalan, belok kembali.
+    if (ped.x < 20 || ped.x > WORLD_W - 20 || ped.y < 20 || ped.y > WORLD_H - 20) {
+      ped.angle += Math.PI;
+    }
+    clampToWorld(ped);
+  }
+}
+
+// Mobil parkir di pinggir jalan (bisa dicuri): lajur luar, bukan trotoar.
+export function spawnParkedCars(G) {
+  const spots = [
+    ['sedan', 668, 220], ['taxi', 620, 868], ['sport', 668, 420],
+    ['sedan', 968, 620], ['truck', 1520, 868], ['sedan', 1820, 668],
+    ['sport', 2120, 868], ['taxi', 920, 1068], ['sedan', 1220, 1468],
+    ['sport', 620, 1068], ['sedan', 1820, 220], ['truck', 320, 1220],
+  ];
+  for (const [type, x, y] of spots) {
+    const vertical = x % 2 === 0;
+    const car = makeCar(type, x, y, vertical ? Math.PI / 2 : 0, { parked: true });
+    G.cars.push(car);
   }
 }
