@@ -39,3 +39,4 @@ writeFileSync(
 // same game/ and screenshots/ always produce the same dossier.json bytes,
 // so run it twice with different MAKEFUN_OUTPUT_DIR values and compare
 // sha256 hashes to prove it before submitting.
+// v7-coverfix: cover re-stage
