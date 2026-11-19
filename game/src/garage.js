@@ -1,7 +1,4 @@
-// NEON TIDE v6-rebuild-2 — garage.js
-// Rosa's Garage upgrades: Engine / Grip Tires / Car Armor / NOS Kit, levels
-// 0-3 each. NOS: hold Shift while driving for a 1.45x boost that drains the
-// tank at 34/s; the tank refills at the garage (service).
+// NEON TIDE v7 "Golden Hour" — garage.js
 import { UPGRADES, NOS_BOOST, NOS_DRAIN } from './config.js';
 
 export function createGarage() {
@@ -30,16 +27,15 @@ export function serviceCar(S) {
   if (S.player.money < 150) return false;
   S.player.money -= 150;
   P.car.cond = P.car.maxCond * UPGRADES.armor.hpMul[S.garage.armor];
-  G_nosRefill(S);
+  refillNosTank(S);
   return true;
 }
 
-function G_nosRefill(S) {
+function refillNosTank(S) {
   S.garage.nosTank = UPGRADES.nos.cap[S.garage.nos];
   if (S.player.car) S.player.car.nos = S.garage.nosTank;
 }
 
-// Effective top speed / turn for the player's current car.
 export function carTopSpeed(S, base) {
   let top = base * UPGRADES.engine.topMul[S.garage.engine];
   const car = S.player.car;
@@ -51,7 +47,6 @@ export function carTurnRate(S, base) {
   return base * UPGRADES.grip.turnMul[S.garage.grip];
 }
 
-// NOS drain while boosting; returns the boost multiplier for this frame.
 export function nosBoost(S, boosting, dt) {
   const car = S.player.car;
   if (!car || S.garage.nos === 0) return 1;
@@ -65,7 +60,6 @@ export function nosBoost(S, boosting, dt) {
   return 1;
 }
 
-// Sync the NOS tank onto a freshly entered car.
 export function syncNosToCar(S) {
   if (S.player.car) S.player.car.nos = S.garage.nosTank;
 }

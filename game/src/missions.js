@@ -1,16 +1,9 @@
-// NEON TIDE v6-rebuild-2 — missions.js
-// 18 story missions for Deke Marlowe, who owes Madame Kestrel $50,000.
-// Step types: go / drive / steal / kill / collect / tail / escape / race /
-// stealth / boss / heist. Every anchor sits on a road line (see config.js).
-// Lessons baked in from the two earlier v6 attempts:
-//  - M7 tail: 20s game-time grace (M.tailGrace) before the 'lost' check —
-//    the player finishes M6 far from the courier and must be able to close.
-//  - Collect anchors on roads: M8/M11 use (-800,300), a road, never (-900,300)
-//    inside a building block.
-//  - A failed mission must be retryable: completeStep() clears `failed` and
-//    startMission() resets mode to 'playing'.
+// NEON TIDE v7 "Golden Hour" — missions.js
+// v7: every mission start shows a spoken briefing line (cutscene.js) with a
+// character portrait; the finale plays the Rook cutscene when the game is won.
 import { makeEnemy, makeCrate, makeMarker } from './entities.js';
 import { addWanted } from './police.js';
+import { missionBriefing, startCutscene, FINALE_SCENES } from './cutscene.js';
 
 export const MISSIONS = [
   { name: 'Welcome Back', brief: 'Walk to Kestrel Club and meet Madame Kestrel.', reward: 500,
@@ -80,8 +73,6 @@ export function createMissions() {
 
 export function startMission(S, i) {
   const M = S.missions;
-  // Each mission spawns its own enemies: clear leftovers (e.g. M14 sentries)
-  // so they never linger into the next mission's kill counting.
   S.enemies = [];
   M.index = i; M.step = 0; M.mode = 'playing';
   M.failed = false; M.frozen = false;
@@ -89,7 +80,10 @@ export function startMission(S, i) {
   M.crates = []; M.gates = []; M.gateIndex = 0;
   M.target = null; M.boss = null;
   setupStep(S);
-  S.dialog = { text: `${MISSIONS[i].name}: ${MISSIONS[i].brief}`, until: S.time + 6 };
+  // v7: a spoken briefing line with the character portrait, plus the plain
+  // mission line the HUD dialog already showed.
+  missionBriefing(S, i);
+  if (!S.dialog) S.dialog = { text: `${MISSIONS[i].name}: ${MISSIONS[i].brief}`, until: S.time + 6 };
 }
 
 function setupStep(S) {
@@ -142,8 +136,6 @@ function setupStep(S) {
   }
 }
 
-// Advance to the next step (or finish the mission). Always clears `failed`
-// and resets mode to 'playing' — a failed mission must never jam the game.
 export function completeStep(S) {
   const M = S.missions;
   M.failed = false;
@@ -161,7 +153,6 @@ export function completeMission(S) {
   const M = S.missions;
   const def = MISSIONS[M.index];
   S.player.money += def.reward;
-  // Mission resupply: Kestrel's crew restocks your ammo after every job.
   S.player.ammo.pistol += 60;
   if (S.player.ammo.smg !== undefined) S.player.ammo.smg += 60;
   S.debt = Math.max(0, S.debt - def.reward);
@@ -174,6 +165,8 @@ export function completeMission(S) {
     M.mode = 'won';
     S.ui.screen = 'won';
     S.dialog = { text: 'King of Port Solano — you own the city. Debt paid.', until: S.time + 10 };
+    // v7 finale: Rook's last words, then Kestrel hands Deke the city.
+    startCutscene(S, FINALE_SCENES);
   }
 }
 
@@ -185,7 +178,6 @@ export function failMission(S, why) {
   S.dialog = { text: `Mission failed: ${why}. Press Enter to retry.`, until: S.time + 8 };
 }
 
-// Distance helper (2D, XZ plane).
 function near(S, x, z, r) {
   const dx = S.player.x - x, dz = S.player.z - z;
   return dx * dx + dz * dz < r * r;
@@ -198,7 +190,6 @@ export function updateMissions(S, dt) {
   if (!def) return;
   const step = def.steps[M.step];
   if (!step) return;
-  // Timed steps share one countdown.
   if (step.timer) {
     M.timer -= dt;
     if (M.timer <= 0) { failMission(S, 'Out of time'); return; }
@@ -228,7 +219,6 @@ export function updateMissions(S, dt) {
     case 'tail': {
       const T = M.target;
       if (T) {
-        // Courier walks its path legs.
         const leg = T.path[T.leg];
         const dx = leg[0] - T.x, dz = leg[1] - T.z;
         const d = Math.hypot(dx, dz);
@@ -259,7 +249,6 @@ export function updateMissions(S, dt) {
       break;
     }
     case 'stealth': {
-      // Detection rises inside any sentry cone, falls outside it.
       let seen = false;
       for (const e of S.enemies) {
         if (e.kind !== 'sentry') continue;
@@ -288,8 +277,6 @@ export function updateMissions(S, dt) {
   }
 }
 
-// Heat Wave endless mode: survive the chase. Wanted climbs one star every
-// 15 seconds; score = seconds survived + 25 per takedown.
 export function updateHeatWave(S, dt) {
   const H = S.heatwave;
   if (!H.active) return;

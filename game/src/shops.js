@@ -1,8 +1,4 @@
-// NEON TIDE v6-rebuild-2 — shops.js
-// Interactables: Rosa's Garage (upgrades + service), Ironworks Arms (SMG +
-// ammo + armor), two safehouses (heal + save). E priority on foot: a shop or
-// safehouse within range beats the nearest parked car; E inside a car near a
-// shop exits the car first, and the next E opens the shop.
+// NEON TIDE v7 "Golden Hour" — shops.js
 import { PLACES } from './config.js';
 import { buyUpgrade, serviceCar } from './garage.js';
 
@@ -21,13 +17,11 @@ export function nearestInteractable(S) {
   return null;
 }
 
-// Called when E is pressed. Returns true if the key was consumed.
 export function handleInteract(S) {
   const P = S.player;
   const shop = nearestInteractable(S);
   if (shop) {
     if (P.car) {
-      // In a car near a shop: exit first; the next E opens the shop.
       exitCar(S);
       return true;
     }
@@ -60,7 +54,6 @@ export function enterCar(S, car) {
   if (car.ai === 'traffic' && car.driver) car.driver = null;
 }
 
-// Shop actions from the DOM menu (buttons call these through window.__game).
 export function shopBuy(S, item) {
   const P = S.player;
   if (S.ui.shop === 'gunshop') {
@@ -87,7 +80,6 @@ export function shopBuy(S, item) {
   return null;
 }
 
-// Prompt text for the HUD ("Press E — ...") based on what is nearby.
 export function interactPrompt(S) {
   const P = S.player;
   const shop = nearestInteractable(S);

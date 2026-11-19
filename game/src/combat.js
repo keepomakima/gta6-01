@@ -1,13 +1,6 @@
-// NEON TIDE v6-rebuild-2 — combat.js
-// Player shooting (mouse aim, weapon cooldown + ammo), enemy AI and damage.
-// KILL COUNTING: hurtEnemy never increments any kill counter. The kill hook
-// lives in main.js updateWorld: it counts enemies at the start of the frame
-// versus the end, so a kill is only counted when an enemy actually leaves
-// the world (an earlier build counted in hurtEnemy's splice path and the
-// counter never moved because updateEnemies owned the removal).
+// NEON TIDE v7 "Golden Hour" — combat.js
 import { WEAPONS } from './config.js';
 import { scarePeds } from './traffic.js';
-import { addWanted } from './police.js';
 
 export function fireWeapon(S) {
   const P = S.player;
@@ -17,7 +10,6 @@ export function fireWeapon(S) {
   P.lastShotAt = S.time;
   if (P.ammo[P.weapon] !== undefined) P.ammo[P.weapon] -= 1;
   scarePeds(S, P.x, P.z, 120);
-  // Aim: mouse direction on screen maps to a world heading from the camera.
   const aim = S.aimHeading ?? P.heading;
   let best = null, bestD = w.range;
   for (const e of S.enemies) {
@@ -37,8 +29,6 @@ export function fireWeapon(S) {
   return true;
 }
 
-// Damage an enemy. Removal happens in updateEnemies (hp <= 0 -> splice);
-// the kill hook in main.js counts the removal.
 export function hurtEnemy(S, enemy, dmg) {
   enemy.hp -= dmg;
   enemy.lastHitAt = S.time;
@@ -53,12 +43,9 @@ export function updateEnemies(S, dt) {
     if (e.hp <= 0) continue;
     const dx = P.x - e.x, dz = P.z - e.z;
     const d = Math.hypot(dx, dz) || 1;
-    // Non-boss enemies hold their post when the player is far away (>320).
     const hold = e.kind !== 'boss' && d > 320 && !e.aggro;
     if (d < 320) e.aggro = true;
     if (e.kind === 'sentry') {
-      // Sentries stand still and watch their cone; they shoot only when
-      // the player is inside the cone and close.
       e.shootTimer -= dt;
       if (d < 55 && e.shootTimer <= 0) {
         e.shootTimer = e.shootEvery;
@@ -68,7 +55,6 @@ export function updateEnemies(S, dt) {
       continue;
     }
     if (hold) continue;
-    // Chase the player, keep a little distance, shoot on a timer.
     const wantHeading = Math.atan2(dx, dz);
     let dh = wantHeading - e.heading;
     while (dh > Math.PI) dh -= Math.PI * 2;
@@ -82,17 +68,15 @@ export function updateEnemies(S, dt) {
     e.shootTimer -= dt;
     if (d < 95 && e.shootTimer <= 0) {
       e.shootTimer = e.shootEvery;
-      const dmg = e.kind === 'boss' ? e.dmg : e.dmg;
+      const dmg = e.dmg;
       if (P.armor > 0) { P.armor = Math.max(0, P.armor - dmg); }
       else P.health -= dmg;
       P.lastDamageAt = S.time;
     }
   }
-  // Removal (and only removal) is where kills are realised.
   S.enemies = S.enemies.filter((e) => e.hp > 0);
 }
 
-// Vision cone test for stealth (M14): is the player inside a sentry's cone?
 export function inVisionCone(e, x, z) {
   const dx = x - e.x, dz = z - e.z;
   const d = Math.hypot(dx, dz);
@@ -103,7 +87,6 @@ export function inVisionCone(e, x, z) {
   return diff < e.coneHalf;
 }
 
-// Melee punch: short range, no ammo, used when the player has no weapon out.
 export function punch(S) {
   const P = S.player;
   if (S.time - P.lastShotAt < 0.45) return false;

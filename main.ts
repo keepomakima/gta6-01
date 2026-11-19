@@ -1,4 +1,4 @@
-// NEON TIDE v6-rebuild-2 — main.ts (entry program, Node 22, stdlib only)
+// NEON TIDE v7 "Golden Hour" — main.ts (entry program, Node 22, stdlib only)
 // Hands the game in: copies game/ and screenshots/ from beside this file to
 // /output and writes /output/dossier.json with the vendored make.fun library
 // (vendor/makefun-game.ts, unchanged from the kit). Outside the grader,
@@ -34,7 +34,7 @@ writeFileSync(
     game_path_max_bytes: 1000,
   }),
 );
-// NEON TIDE v6-rebuild-2 — main.ts (entry program, Node 22, stdlib only)
+// NEON TIDE v7 "Golden Hour" — main.ts (entry program, Node 22, stdlib only)
 // One more note for the next builder: the dossier is deterministic — the
 // same game/ and screenshots/ always produce the same dossier.json bytes,
 // so run it twice with different MAKEFUN_OUTPUT_DIR values and compare

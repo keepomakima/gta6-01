@@ -1,18 +1,12 @@
-// NEON TIDE v6-rebuild-2 — shots.js
-// Deterministic screenshot autopilot: ?shot=<name>&seed=20261121 sets up a
-// staged scene, freezes the mission engine and the police (shotMode), snaps
-// the chase camera, and flags window.__shotReady when the frame is ready.
-// Lessons from the earlier v6 attempts, applied here from the start:
-//  - snap the camera in applyShot (the camera lerps in slowly at ~0.2x
-//    headless game time, so an unsnapped first frame is dark and far away);
-//  - set lastSeenAt = S.time and shotMode so the wanted level does not
-//    decay during the shot;
-//  - parkHeli(S, x, z, y) — height LAST;
-//  - casino pylon is 3x22 on the front side; waypoint beacon 26 tall;
-//  - pier deck is 0.4 thick; stealth shot freezes missions with detection 35.
+// NEON TIDE v7 "Golden Hour" — shots.js
+// Deterministic screenshot autopilot: ?shot=<name>&seed=20261123 sets up a
+// v7 shots are all golden-hour staged: the cover faces the low western sun
+// so the amber disc, long shadows and warm fog are in frame, and every shot
+// has pedestrians on the sidewalks (v6r2's city looked empty).
 import { startMission } from './missions.js';
 import { parkHeli } from './helicopter.js';
-import { makeCar } from './entities.js';
+import { makeCar, makePed } from './entities.js';
+import { startCutscene } from './cutscene.js';
 
 function snapBehind(S, x, z, heading, back = 16, up = 8.5) {
   const fx = Math.sin(heading), fz = Math.cos(heading);
@@ -31,6 +25,16 @@ function putInCar(S, type, x, z, heading) {
   return car;
 }
 
+// A few pedestrians placed on the sidewalk near the shot so the frame is
+// visibly alive (random spawns are never guaranteed to be in frame).
+function stagePeds(S, spots) {
+  for (const [x, z, heading] of spots) {
+    const ped = makePed(x, z);
+    ped.heading = heading;
+    S.peds.push(ped);
+  }
+}
+
 function freezeShot(S) {
   S.shotMode = true;
   S.missions.frozen = true;
@@ -40,81 +44,82 @@ function freezeShot(S) {
 export function applyShot(S, name) {
   const P = S.player;
   S.weather.autoRain = false;
-  if (name === 'stormchase') {
-    // COVER: night rain chase, wanted 5, heli + spotlight, spike strip,
-    // roadblock ahead, NOS Lv2, M15 in progress.
-    S.weather.clock = 22.5;
-    S.weather.rain = 0.9;
+  if (name === 'goldenchase') {
+    // COVER: golden-hour chase facing the low western sun — amber disc in
+    // the sky, long shadows, wanted 5, heli + spotlight, spike strip,
+    // roadblock ahead, NOS Lv2, M15 in progress, peds on the sidewalks.
+    S.weather.clock = 17.8;
+    S.weather.rain = 0;
     S.garage.nos = 2; S.garage.nosTank = 160;
-    putInCar(S, 'sport', 0, 0, 0);
+    // Heading -1.82 (slightly north of due west) angles the chase camera
+    // so the low western sun disc sits in frame above the skyline instead
+    // of hiding behind the tower on the right.
+    putInCar(S, 'sport', 0, 0, -1.82);
     P.car.nos = 160;
     S.wanted = 5;
     S.lastSeenAt = S.time;
     S.missions.index = 14; S.missions.mode = 'playing'; S.missions.step = 1;
     S.shotHideBeacon = true; // the Airfield beacon is 800+ units away and
-    // renders as a stray yellow streak across the sky
-    parkHeli(S, 12, 60, 26);
-    S.spike = { x: 0, z: 55, until: S.time + 60 };
+    parkHeli(S, -60, 40, 26);
+    S.spike = { x: -55, z: 0, until: S.time + 60 };
     S.roadblock = [
-      makeCar('cruiser', -14, 90, Math.PI / 2),
-      makeCar('cruiser', 14, 90, Math.PI / 2),
+      makeCar('cruiser', -90, -14, Math.PI),
+      makeCar('cruiser', -90, 14, Math.PI),
     ];
-    S.cruisers.push(makeCar('cruiser', -35, 45, 0.4));
-    S.cruisers.push(makeCar('cruiser', 35, 50, -0.3));
-    snapBehind(S, 0, 0, 0, 18, 9);
+    S.cruisers.push(makeCar('cruiser', -45, -35, -0.4));
+    S.cruisers.push(makeCar('cruiser', -45, 35, 0.3));
+    stagePeds(S, [[16, 18, 0], [-16, -18, Math.PI], [24, -16, Math.PI / 2], [-30, 18, 0]]);
+    snapBehind(S, 0, 0, -1.82, 15, 8);
     freezeShot(S);
-  } else if (name === 'neontide') {
-    // Motor Tide Runner 900 + rider in front of the TIDE casino pylon.
-    S.weather.clock = 21.0;
-    S.weather.rain = 0.35;
+  } else if (name === 'neonmile') {
+    // Dusk on the Neon Mile: motor Tide Runner 900 + rider in front of the
+    // TIDE casino pylon, neon signs lit, pedestrians on the plaza.
+    S.weather.clock = 17.9;
+    S.weather.rain = 0;
     S.garage.nos = 2; S.garage.nosTank = 160;
-    // Park the bike on the casino plaza's south side (300,580), facing -z
-    // toward the casino: the pylon stands on the casino's south face
-    // (z=541) and is only visible from this side, not from the road at z=420.
     putInCar(S, 'bike', 300, 580, Math.PI);
     P.x = 300; P.z = 580; P.heading = Math.PI;
     P.car.x = 300; P.car.z = 580; P.car.heading = Math.PI;
-    S.wanted = 4;
+    S.wanted = 3;
     S.lastSeenAt = S.time;
     startMission(S, 14); // M15 Neon Mile: objective line + casino cash
     S.shotHideBeacon = true;
     parkHeli(S, 310, 545, 30); // between camera and pylon, in frame
-    snapBehind(S, 300, 580, Math.PI, 14, 7);
+    stagePeds(S, [[280, 560, 0.5], [320, 565, -0.5], [290, 600, Math.PI], [330, 595, 0]]);
+    snapBehind(S, 300, 580, Math.PI, 9, 5.5);
     freezeShot(S);
-  } else if (name === 'runway') {
-    // Day: sport ON the runway next to the parked plane, cruiser closing in.
-    // Shot from the west looking east down the runway; the plane's bright
-    // (non-metallic) fuselage now reads even on its shadow side.
-    S.weather.clock = 11.0;
-    S.weather.rain = 0;
-    putInCar(S, 'sport', 780, -620, Math.PI / 2);
-    P.car.heading = Math.PI / 2;
-    P.heading = Math.PI / 2;
-    S.wanted = 2;
-    S.lastSeenAt = S.time;
-    S.cruisers.push(makeCar('cruiser', 830, -660, -0.5));
-    startMission(S, 12);
-    S.missions.timer = 63;
-    S.shotHideBeacon = true; // gate-1 beacon is behind the car, a stray streak
-    snapBehind(S, 780, -620, Math.PI / 2, 18, 9);
-    freezeShot(S);
-  } else if (name === 'pier') {
-    // Stealth: player close to sentry 2, inside the pier, DETECTED 35%.
-    // Sentry 2 stands at (-1000,690); the player at (-980,680) faces it
-    // (heading -1.1) so the sentry and its cone are in frame, while the
-    // player stays outside every cone (detection frozen at 35).
-    S.weather.clock = 20.0;
+  } else if (name === 'beachfront') {
+    // Golden hour on the Beachfront boardwalk: Deke on foot facing SOUTH
+    // (+z) toward the palms, the beach and the sea; the skyline is behind
+    // the camera and the golden sky fills the frame ahead.
+    S.weather.clock = 17.6;
     S.weather.rain = 0;
     P.onFoot = true; P.car = null;
-    P.x = -980; P.z = 680; P.heading = -1.1;
+    P.x = 600; P.z = 680; P.heading = 0;
+    S.parked.push(makeCar('sport', 620, 660, Math.PI / 2));
+    S.wanted = 1;
+    S.lastSeenAt = S.time;
+    startMission(S, 11); // M12 VIP Ride: Beachfront drop
+    S.shotHideBeacon = true;
+    stagePeds(S, [[580, 700, 0.3], [615, 705, -0.4], [640, 695, Math.PI], [570, 690, 1.2]]);
+    snapBehind(S, 600, 680, 0, 11, 6);
+    freezeShot(S);
+  } else if (name === 'piercutscene') {
+    // Stealth + story: the pier at dusk with Madame Kestrel's cutscene
+    // portrait panel on screen, DETECTED 35%, sentry + vision cone close
+    // in frame. Player stands 9 units from sentry 2 (-1000, 690) so the
+    // sentry reads at human scale instead of a speck on the horizon.
+    S.weather.clock = 18.2;
+    S.weather.rain = 0;
+    P.onFoot = true; P.car = null;
+    P.x = -992; P.z = 686; P.heading = -1.107;
     startMission(S, 13);
     S.missions.detection = 35;
     S.shotHideBeacon = true; // beacon would cover the pier shot
-    S.dialog = { text: 'Madame Kestrel: "Quiet now. The sentries watch the pier."', until: S.time + 60 };
-    snapBehind(S, -980, 680, -1.1, 12, 7);
+    startCutscene(S, [{ who: 'kestrel', text: '"Quiet now. The sentries watch the pier."' }]);
+    snapBehind(S, -992, 686, -1.107, 10, 6);
     freezeShot(S);
   }
-  // Let a few frames render, then flag readiness for the screenshot tool.
   let frames = 0;
   const tick = () => {
     frames += 1;

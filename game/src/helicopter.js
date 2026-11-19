@@ -1,7 +1,4 @@
-// NEON TIDE v6-rebuild-2 — helicopter.js
-// AIR-1, the PSPD helicopter: spawns at wanted 4-5, hovers above the player
-// with a visible spotlight cone on the ground. Frozen in shot mode.
-// parkHeli(S, x, z, y) — argument order is x, z, y (height last).
+// NEON TIDE v7 "Golden Hour" — helicopter.js
 import { WANTED } from './config.js';
 
 export function updateHeli(S, dt) {
@@ -21,9 +18,6 @@ export function updateHeli(S, dt) {
   }
 }
 
-// Park the heli at a fixed spot for a staged screenshot.
-// NOTE: arguments are (x, z, y) — height LAST. An earlier build passed
-// (x, y, z) and parked the heli 232 units up in the sky.
 export function parkHeli(S, x, z, y) {
   const H = S.heli;
   H.active = true;
@@ -34,8 +28,6 @@ export function parkHeli(S, x, z, y) {
 
 export function hideHeli(S) { S.heli.active = false; }
 
-// Spotlight cone geometry the renderer draws: apex at the heli, base circle
-// on the ground below it (radius 6, length 28 in the v6 shot tuning).
 export function heliSpot(S) {
   const H = S.heli;
   if (!H.active) return null;

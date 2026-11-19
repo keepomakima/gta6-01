@@ -1,13 +1,14 @@
-// NEON TIDE v6-rebuild-2 — hud.js
-// DOM HUD + canvas minimap. The HUD root is pinned with `bottom: 0` in
-// index.html — an earlier build left it unpositioned and the whole bottom
-// bar rendered above the viewport. Detection bar shows only during M14
-// (missions.index === 13); `missions.current` is a method, not a property,
-// and reading it as a number was the earlier bug.
+// NEON TIDE v7 "Golden Hour" — hud.js
+// (missions.index === 13). v7: the cutscene panel (portrait + speaker +
+// line + letterbox) is drawn here from S.cutscene / S.dialog.who.
 import { MISSIONS } from './missions.js';
 import { districtAt, WEAPONS } from './config.js';
 import { clockString } from './weather.js';
 import { interactPrompt } from './shops.js';
+import { CHARACTERS } from './cutscene.js';
+import { currentToast } from './achievements.js';
+import { stuntPopup } from './stunts.js';
+import { statSummary } from './stats.js';
 
 function $(id) { return document.getElementById(id); }
 
@@ -20,7 +21,6 @@ export function updateHUD(S) {
   el('hud-clock', clockString(S));
   el('hud-district', districtAt(P.x, P.z));
   el('hud-station', S.audio ? `♪ ${['Tide FM', 'Neon Nights', 'Harbor Rock'][S.audio.station]}` : '');
-  // Wanted stars: filled ★ red up to the current level.
   const stars = $('hud-wanted');
   if (stars) {
     stars.textContent = '★'.repeat(S.wanted) + '☆'.repeat(5 - S.wanted);
@@ -36,7 +36,6 @@ export function updateHUD(S) {
     nos.style.width = `${(S.garage.nos > 0 ? (P.car ? P.car.nos : S.garage.nosTank) / [0, 100, 160, 240][S.garage.nos] * 100 : 0)}%`;
     nos.parentElement.style.display = S.garage.nos > 0 ? 'block' : 'none';
   }
-  // Objective tracker.
   const M = S.missions;
   let obj = 'Free roam — press Enter for the next mission';
   if (M.mode === 'playing' && MISSIONS[M.index]) {
@@ -52,10 +51,29 @@ export function updateHUD(S) {
   else if (M.mode === 'failed') obj = 'Mission failed — press Enter to retry';
   else if (M.mode === 'won') obj = 'King of Port Solano — you own the city!';
   el('hud-objective', obj);
-  // Heat Wave score.
   const hw = S.heatwave;
   el('hud-heatwave', hw.active ? `HEAT WAVE ${Math.floor(hw.elapsed)}s — score ${hw.score}` : '');
-  // Detection bar: only M14 (index 13).
+  // Screenshot mode: hide the new v7 HUD layers (chatter, trophy toast,
+  // stunt banner, career strip) so the staged frames stay clean — the
+  // classic HUD (objective, wanted, minimap, dialog) still shows. The
+  // toast div has a gold border, so an empty one would render as a small
+  // pill at the top of the frame; display:none removes it entirely.
+  const shotMode = !!S.shotMode;
+  for (const id of ['hud-chatter', 'hud-toast', 'hud-stunt', 'hud-stats']) {
+    const n = $(id);
+    if (n) n.style.display = shotMode ? 'none' : '';
+  }
+  if (!shotMode) {
+    // Chatter ticker: dispatch, DJ, or street gossip under the objective.
+    el('hud-chatter', S.chatter && S.chatter.line ? S.chatter.line : '');
+    // Trophy banner: a gold toast for a few seconds when one unlocks.
+    const toast = currentToast(S);
+    el('hud-toast', toast ? `★ ${toast.name} — ${toast.blurb}` : '');
+    // Stunt payout banner: near misses and drifts, big and brief.
+    el('hud-stunt', stuntPopup(S));
+    // Career strip: style, top speed, distance, earnings — once playing.
+    el('hud-stats', statSummary(S));
+  }
   const det = $('hud-detection');
   if (det) {
     const show = M.mode === 'playing' && M.index === 13;
@@ -65,20 +83,60 @@ export function updateHUD(S) {
       det.querySelector('.det-label').textContent = `DETECTED ${Math.floor(M.detection)}%`;
     }
   }
-  // Dialog line.
-  const dlg = $('hud-dialog');
-  if (dlg) {
-    dlg.textContent = S.dialog && S.time < S.dialog.until ? S.dialog.text : '';
-  }
+  // Dialog line + cutscene portrait panel (v7).
+  drawDialog(S);
   const flash = $('hud-flash');
   if (flash) flash.textContent = S.flash || '';
-  // Interact prompt (E).
   el('hud-prompt', S.ui.screen === 'playing' ? interactPrompt(S) : '');
   drawMinimap(S);
 }
 
-// Minimap: north-up canvas, 220x150. Dots for the player (green), cars
-// (grey), police (blue/red), mission marker (yellow), enemies (red), heli.
+// Dialog: a cutscene line (portrait panel + letterbox) wins over the plain
+// dialog bar; a briefing line shows the speaker's portrait too.
+export function drawDialog(S) {
+  const panel = $('cutscene');
+  const dlg = $('hud-dialog');
+  const C = S.cutscene;
+  if (C && C.active) {
+    const ch = CHARACTERS[C.who] || CHARACTERS.deke;
+    if (panel) {
+      panel.style.display = 'flex';
+      const face = panel.querySelector('.cs-face');
+      const name = panel.querySelector('.cs-name');
+      const text = panel.querySelector('.cs-text');
+      if (face) { face.textContent = ch.short; face.style.background = ch.color; }
+      if (name) { name.textContent = ch.name; name.style.color = ch.color; }
+      if (text) text.textContent = C.text;
+      panel.querySelector('.cs-hint').textContent = 'Enter / Space — continue · Esc — skip';
+    }
+    if (dlg) dlg.textContent = '';
+    return;
+  }
+  if (panel) panel.style.display = 'none';
+  if (dlg) {
+    const d = S.dialog;
+    if (d && S.time < d.until) {
+      // Briefing lines carry a speaker: show their portrait inline.
+      if (d.who && CHARACTERS[d.who]) {
+        const ch = CHARACTERS[d.who];
+        dlg.innerHTML = '';
+        const face = document.createElement('span');
+        face.className = 'dlg-face';
+        face.textContent = ch.short;
+        face.style.background = ch.color;
+        dlg.appendChild(face);
+        const span = document.createElement('span');
+        span.textContent = ' ' + d.text;
+        dlg.appendChild(span);
+      } else {
+        dlg.textContent = d.text;
+      }
+    } else dlg.textContent = '';
+  }
+}
+
+// (grey), police (blue/red), mission marker (yellow), enemies (red), heli,
+// and pedestrians (pale dots — the living city shows on the map too).
 export function drawMinimap(S) {
   const cv = $('minimap');
   if (!cv) return;
@@ -104,6 +162,7 @@ export function drawMinimap(S) {
   for (const c of S.parked) dot(c.x, c.z, '#aaaaaa', 2);
   for (const c of S.cruisers) dot(c.x, c.z, '#3355ff', 3);
   for (const e of S.enemies) dot(e.x, e.z, '#ff3333', 3);
+  for (const p of S.peds) dot(p.x, p.z, '#c2c2d8', 1.5);
   if (S.heli.active) dot(S.heli.x, S.heli.z, '#ff8800', 4);
   if (S.missions.marker) {
     ctx.fillStyle = '#ffd21a';
@@ -111,7 +170,6 @@ export function drawMinimap(S) {
     ctx.beginPath(); ctx.moveTo(mx, my - 7); ctx.lineTo(mx + 6, my); ctx.lineTo(mx, my + 7); ctx.lineTo(mx - 6, my); ctx.closePath(); ctx.fill();
   }
   dot(S.player.x, S.player.z, '#33ff66', 4);
-  // View direction tick.
   ctx.strokeStyle = '#33ff66';
   ctx.beginPath();
   ctx.moveTo(sx(S.player.x), sz(S.player.z));
@@ -119,7 +177,6 @@ export function drawMinimap(S) {
   ctx.stroke();
 }
 
-// Screen overlays: title / pause / busted / wasted / won / shop.
 export function showScreen(S, name) {
   for (const id of ['title-screen', 'pause-screen', 'shop-screen', 'end-screen']) {
     const n = $(id);

@@ -4,15 +4,18 @@
 [![rank](https://make.fun/badge/gta6-01/keepomakima/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/keepomakima/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**Neon Tide — open-world crime in Port Solano.** A 3D open-world crime game
-built for the make.fun "Make GTA 6" bounty: third-person chase camera
-(three.js WebGL2), a full city of 8 named districts, traffic and pedestrians,
-cars to steal and drive, a 0–5 star wanted system with PSPD cruisers,
-roadblocks, spike strips, PIT maneuvers and the AIR-1 police helicopter,
-18 story missions for Deke Marlowe — who owes Madame Kestrel $50,000 —
-plus garage upgrades with NOS, the Tide Runner 900 motorcycle, rain weather,
-a gun shop, two safehouses, three procedural radio stations, saves, and an
-endless Heat Wave survival mode.
+**Neon Tide — Golden Hour — open-world crime in Port Solano.** A 3D
+open-world crime game built for the make.fun "Make GTA 6" bounty:
+third-person chase camera (three.js WebGL2), a sun-soaked golden-hour city
+of 8 named districts with window facades, rooftop props, palm trees,
+billboards and traffic lights, living pedestrians with walk cycles, denser
+varied traffic with headlights, cars to steal and drive, a 0–5 star wanted
+system with PSPD cruisers, roadblocks, spike strips, PIT maneuvers and the
+AIR-1 police helicopter, 18 story missions for Deke Marlowe — who owes
+Madame Kestrel $50,000 — with intro, briefing and finale cutscenes and
+character portraits, plus garage upgrades with NOS, the Tide Runner 900
+motorcycle, rain weather, a gun shop, two safehouses, three procedural
+radio stations, saves, and an endless Heat Wave survival mode.
 
 ## Run it
 
@@ -23,11 +26,12 @@ node serve.ts
 Then open http://localhost:8080 in desktop Chrome. Keyboard + mouse:
 WASD move/drive, E enter/exit car, mouse aim + click to shoot, 1/2/3 switch
 weapons, Shift NOS/run, Space handbrake, R radio station, Esc pause,
-Enter start the next mission.
+Enter start the next mission (and advance cutscenes).
 
 ---
 
 <sub>Entered on [make.fun](https://make.fun/?ref=dy7a168m&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+
 ## Missions
 
 1. Welcome Back — walk to Kestrel Club

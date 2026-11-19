@@ -1,4 +1,4 @@
-// NEON TIDE v6-rebuild-2 — serve.ts
+// NEON TIDE v7 "Golden Hour" — serve.ts
 // A tiny static server for game/ (Node 22, standard library only), so the
 // entry can be played locally without a build step:
 //   node serve.ts            (serves game/ on http://localhost:8080)
@@ -76,4 +76,4 @@ createServer((request, response) => {
 });
 // serve.ts serves only game/ — the dossier screenshots live in screenshots/
 // at the repo root and are taken by the playtest scripts in
-// ~/workspace/makefun/gta6-01-work/ (gta6shots-v6r2.mjs), never by hand.
+// ~/workspace/makefun/gta6-01-work/ (gta6shots-v7.mjs), never by hand.

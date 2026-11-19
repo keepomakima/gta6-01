@@ -1,6 +1,5 @@
-// NEON TIDE v6-rebuild-2 — input.js
-// Keyboard + mouse input with edge-triggered action keys (E / F / Space).
-// Playtest/debug code can inject keys through `press()` / `release()`.
+// NEON TIDE v7 "Golden Hour" — input.js
+// v7: Enter / Space also advance cutscenes (handled in main.js).
 export class Input {
   constructor() {
     this.keys = new Set();
@@ -33,7 +32,6 @@ export class Input {
   }
   down(code) { return this.keys.has(code); }
   wasPressed(code) { return this.pressed.has(code); }
-  // Call once per frame after the game consumed input.
   endFrame() { this.pressed.clear(); this.mouse.clicked = false; }
   press(code) { this.keys.add(code); this.pressed.add(code); }
   release(code) { this.keys.delete(code); }
@@ -49,10 +47,9 @@ export class Input {
   get shoot() { return this.mouse.down || this.mouse.clicked; }
   get pause() { return this.wasPressed('Escape'); }
   get radioNext() { return this.wasPressed('KeyR'); }
+  get advance() { return this.wasPressed('Enter') || this.wasPressed('Space'); }
 }
 
-// Debug helper: simulate a full key tap (down + up) in one frame, used by the
-// headless playtest to open menus and confirm dialogs without a real keyboard.
 export function tapKey(input, code) {
   input.press(code);
   setTimeout(() => input.release(code), 50);

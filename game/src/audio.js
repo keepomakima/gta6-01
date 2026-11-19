@@ -1,8 +1,4 @@
-// NEON TIDE v6-rebuild-2 — audio.js
-// Procedural WebAudio: three original radio stations (no licensed music)
-// plus SFX. Everything is synthesized; nothing is fetched. Safe to call
-// before any user gesture — the context is created lazily and resumes on
-// the first keypress.
+// NEON TIDE v7 "Golden Hour" — audio.js
 const STATIONS = [
   { name: 'Tide FM', scale: [0, 3, 5, 7, 10], bpm: 96, wave: 'triangle' },
   { name: 'Neon Nights', scale: [0, 2, 3, 7, 8], bpm: 122, wave: 'sawtooth' },
@@ -36,7 +32,6 @@ export function nextStation(A) {
   A.noteStep = 0;
 }
 
-// One radio tick: schedule the next note of the current station's loop.
 export function radioTick(S, dt) {
   const A = S.audio;
   if (!A.radioOn || S.ui.screen !== 'playing') return;
@@ -83,8 +78,6 @@ export function sfxMission(A) {
   setTimeout(() => blip(A, 784, 0.2, 'sine', 0.12), 140);
 }
 
-// Siren: a slow two-tone loop while wanted >= 2. Kept quiet by default in
-// headless playtest (no gesture => no context => no-op).
 export function sirenTick(S, dt) {
   const A = S.audio;
   const ctx = ensureCtx(A);

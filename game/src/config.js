@@ -1,8 +1,9 @@
-// NEON TIDE v6-rebuild-2 — config.js
-// All tuning constants for the 3D open-world crime game in Port Solano.
-// Original city, characters, vehicles and story. No Rockstar material.
-export const SAVE_KEY = 'neon-tide-v6r2-save';
-export const SEED = 20261121;
+// NEON TIDE v7 "Golden Hour" — config.js
+// Tuning constants for the 3D open-world crime game in Port Solano.
+// v7 changes vs v6r2: new save key, new seed, golden-hour sun tuning,
+// warmer district palettes, pedestrian clothing palette, van traffic type.
+export const SAVE_KEY = 'neon-tide-v7-save';
+export const SEED = 20261123;
 export const DEBT_START = 50000;
 
 export const WORLD = {
@@ -10,20 +11,29 @@ export const WORLD = {
   roadEvery: 200, roadWidth: 26,
 };
 
-// Districts of Port Solano (8). Order matters for the HUD + minimap legend.
+// Golden hour: the low warm sun the whole v7 look is built around.
+export const GOLDEN_HOUR = {
+  clock: 17.8,            // game starts at golden hour
+  sunColor: 0xffb36b,     // low amber sun
+  sunHeight: 55,          // low sun -> long shadows
+  fogColor: 0xe8a06a,      // warm haze
+  skyTop: 0x2e4a7a,        // dusk-blue zenith over amber horizon
+  skyBottom: 0xffc07a,
+};
+
 export const DISTRICTS = [
-  { name: 'Downtown', color: 0x3a4a6b },
-  { name: 'Harbor', color: 0x4a3a2c },
-  { name: 'Beachfront', color: 0x2c5a6b },
-  { name: 'Old Town', color: 0x5a4a3a },
-  { name: 'Suburbs', color: 0x3a5a3a },
-  { name: 'Airfield', color: 0x555560 },
-  { name: 'Neon Mile', color: 0x6b2a5a },
-  { name: 'Marina', color: 0x2a4a6b },
+  { name: 'Downtown', color: 0x4a5578 },
+  { name: 'Harbor', color: 0x6b4a30 },
+  { name: 'Beachfront', color: 0x3a7a8a },
+  { name: 'Old Town', color: 0x7a5a3a },
+  { name: 'Suburbs', color: 0x4a7a4a },
+  { name: 'Airfield', color: 0x666672 },
+  { name: 'Neon Mile', color: 0x8a2a6a },
+  { name: 'Marina', color: 0x2a5a8a },
 ];
 
-// Landmark anchors. Every anchor sits ON a road line (x or z a multiple of 200)
-// so it is always reachable — never inside a building block.
+// Landmark anchors. Every anchor sits ON a road line (x or z a multiple of
+// 200) so it is always reachable — never inside a building block.
 export const PLACES = {
   club: { x: 0, z: 100, name: "Kestrel Club" },
   garage: { x: 400, z: 200, name: "Rosa's Garage" },
@@ -37,15 +47,21 @@ export const PLACES = {
   marina: { x: -800, z: 600, name: 'Marina' },
 };
 
-// Vehicle classes. top = top speed (units/s), accel, turn (rad/s), hp.
 export const CAR_TYPES = {
-  sedan: { top: 150, accel: 90, turn: 2.6, hp: 100, color: 0x8a8f9a, label: 'Solano Sedan' },
+  sedan: { top: 150, accel: 90, turn: 2.6, hp: 100, color: 0x9aa0b0, label: 'Solano Sedan' },
   taxi: { top: 145, accel: 85, turn: 2.6, hp: 100, color: 0xffc21a, label: 'Harbor Cab' },
   sport: { top: 210, accel: 150, turn: 3.4, hp: 80, color: 0xff3355, label: 'Neon GT' },
-  truck: { top: 110, accel: 60, turn: 2.0, hp: 160, color: 0x5a6b7a, label: 'Dock Hauler' },
+  truck: { top: 110, accel: 60, turn: 2.0, hp: 160, color: 0x6a7a8a, label: 'Dock Hauler' },
+  van: { top: 125, accel: 70, turn: 2.2, hp: 130, color: 0x7a8a6a, label: 'Marina Van' },
   cruiser: { top: 185, accel: 130, turn: 3.2, hp: 120, color: 0x2233aa, label: 'PSPD Cruiser' },
   bike: { top: 230, accel: 170, turn: 4.4, hp: 55, color: 0x00e5ff, label: 'Tide Runner 900' },
 };
+
+// Paint jobs traffic cars wear, so the streets are not one grey fleet.
+export const TRAFFIC_PAINTS = [
+  0xc23a3a, 0x3a6ac2, 0x3ac27a, 0xe8d24a, 0xe8e8e8, 0x2a2a33,
+  0xc27a3a, 0x7a3ac2, 0x4ac2c2, 0xb0b8c8, 0x5a3a2a, 0x2a6a4a,
+];
 
 export const WEAPONS = {
   fists: { name: 'Fists', dmg: 12, range: 6, cooldown: 0.45, ammo: Infinity },
@@ -53,7 +69,6 @@ export const WEAPONS = {
   smg: { name: 'Tide SMG', dmg: 16, range: 80, cooldown: 0.09, ammo: 240 },
 };
 
-// Garage upgrades, level 0..3 each. NOS boost is Shift while driving.
 export const UPGRADES = {
   engine: { name: 'Engine', costs: [0, 800, 1600, 3200], topMul: [1, 1.12, 1.25, 1.4] },
   grip: { name: 'Grip Tires', costs: [0, 600, 1200, 2400], turnMul: [1, 1.12, 1.25, 1.4] },
@@ -63,7 +78,6 @@ export const UPGRADES = {
 export const NOS_BOOST = 1.45;
 export const NOS_DRAIN = 34;
 
-// Wanted / police tuning.
 export const WANTED = {
   max: 5,
   decayDelay: 6,      // seconds unseen before a star decays
@@ -74,10 +88,15 @@ export const WANTED = {
   spikeAt: 4,
   heliAt: 4,
 };
-// District lookup: which named district contains a world point.
-// Airfield is the flat north-east corner, Neon Mile the casino strip,
-// Marina the south-west docks, Harbor the west docks, Beachfront the south
-// shore, Old Town the south-west blocks, Suburbs the east, Downtown centre.
+
+// Pedestrian clothing palette — the living city wears colour, not grey.
+export const PED_SHIRTS = [
+  0xe84a5a, 0x4a7ae8, 0x4ae88a, 0xe8c24a, 0x8a4ae8, 0xe88a4a,
+  0xffffff, 0x2a2a33, 0x4ac2c2, 0xc23a7a, 0x7ac24a, 0xff9a5a,
+];
+export const PED_PANTS = [0x222233, 0x3a3a4a, 0x5a4a3a, 0x2a4a5a, 0x6a6a7a];
+export const PED_SKINS = [0xd8a878, 0xc89878, 0x8a5a3a, 0xe8b898, 0x6a4a2a];
+
 export function districtAt(x, z) {
   if (x > 600 && z < -450) return 'Airfield';
   if (x >= -200 && x <= 400 && z >= 300 && z <= 600) return 'Neon Mile';
@@ -89,7 +108,6 @@ export function districtAt(x, z) {
   return 'Downtown';
 }
 
-// Snap a point onto the nearest road centre line (roads every 200 units).
 export function snapToRoad(x, z) {
   const rx = Math.round(x / 200) * 200;
   const rz = Math.round(z / 200) * 200;

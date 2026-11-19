@@ -1,7 +1,4 @@
-// NEON TIDE v6-rebuild-2 — police.js
-// Wanted 0-5, PSPD cruisers that chase, roadblocks at 3+, PIT maneuvers at
-// 3+, spike strips at 4+, and the Busted / Wasted flow. In shot mode the
-// whole system freezes so a staged screenshot keeps its wanted level.
+// NEON TIDE v7 "Golden Hour" — police.js
 import { WANTED } from './config.js';
 import { makeCar } from './entities.js';
 
@@ -13,7 +10,6 @@ export function addWanted(S, n) {
 export function updatePolice(S, dt) {
   if (S.shotMode) return; // frozen for staged screenshots
   const P = S.player;
-  // Wanted decay: only while unseen for a while, one star at a time.
   if (S.wanted > 0 && S.time - S.lastSeenAt > WANTED.decayDelay) {
     S.wantedTimer += dt;
     if (S.wantedTimer > WANTED.decayEvery) {
@@ -23,7 +19,6 @@ export function updatePolice(S, dt) {
   } else if (S.wanted > 0) {
     S.wantedTimer = 0;
   }
-  // How many cruisers should be out? One per star, capped at 5.
   const want = S.wanted;
   while (S.cruisers.length < want && S.cruisers.length < 5) {
     const a = Math.random() * Math.PI * 2;
@@ -32,7 +27,6 @@ export function updatePolice(S, dt) {
     S.cruisers.push(car);
   }
   while (S.cruisers.length > want) S.cruisers.pop();
-  // Chase: steer toward the player, ram speed when close.
   for (const c of S.cruisers) {
     const dx = P.x - c.x, dz = P.z - c.z;
     const d = Math.hypot(dx, dz) || 1;
@@ -47,7 +41,6 @@ export function updatePolice(S, dt) {
     c.z += Math.cos(c.heading) * c.speed * dt;
     const col = S.world.collideCircle(c.x, c.z, 4);
     c.x = col.x; c.z = col.z;
-    // PIT maneuver at 3+: when alongside the player's car, shove it sideways.
     if (S.wanted >= WANTED.pitAt && P.car && d < 16 && Math.abs(dh) < 0.6) {
       if (!c.pitCooldown || S.time - c.pitCooldown > 6) {
         c.pitCooldown = S.time;
@@ -57,22 +50,16 @@ export function updatePolice(S, dt) {
         S.flash = 'PIT maneuver!';
       }
     }
-    // Ram the player on foot: knockdown damage, and busted if caught.
     if (P.onFoot && d < 5) {
       P.health -= 20 * dt;
       if (S.time - (c.bustAt || 0) > 1.2) { c.bustAt = S.time; }
     }
-    // The cops only "see" the player while a cruiser is close (within 150).
-    // Setting lastSeenAt unconditionally made wanted never decay and the
-    // M4 escape mission impossible.
     if (d < 150) S.lastSeenAt = S.time;
   }
-  // Far from every cruiser, the heat cools twice as fast.
   if (S.wanted > 0 && S.cruisers.length > 0) {
     const nearest = Math.min(...S.cruisers.map((c) => Math.hypot(c.x - P.x, c.z - P.z)));
     if (nearest > 200) S.wantedTimer += dt;
   }
-  // Busted: on foot, a cruiser within 4 units for over a second.
   if (P.onFoot && S.wanted > 0) {
     const near = S.cruisers.some((c) => Math.hypot(c.x - P.x, c.z - P.z) < 4.5);
     if (near) {
@@ -80,7 +67,6 @@ export function updatePolice(S, dt) {
       if (S.bustedTimer > 1.2) busted(S);
     } else S.bustedTimer = 0;
   }
-  // Roadblocks at 3+: two cruisers parked across the road ahead of the player.
   if (S.wanted >= WANTED.roadblockAt && !S.roadblock) {
     const hx = Math.sin(P.heading), hz = Math.cos(P.heading);
     S.roadblock = [
@@ -90,8 +76,6 @@ export function updatePolice(S, dt) {
     S.roadblockAt = S.time;
   }
   if (S.roadblock && (S.wanted < WANTED.roadblockAt || S.time - S.roadblockAt > 25)) S.roadblock = null;
-  // Spike strips at 4+: dropped ahead of the player's car; driving over one
-  // bursts a tire (top speed -55% for 5s, condition -12).
   if (S.wanted >= WANTED.spikeAt && P.car && !S.spike) {
     const hx = Math.sin(P.heading), hz = Math.cos(P.heading);
     S.spike = { x: P.x + hx * 90, z: P.z + hz * 90, until: S.time + 20 };
@@ -119,7 +103,6 @@ export function busted(S) {
   S.player.health = 100;
 }
 
-// Wasted: health hit zero — respawn at the hospital, lose some cash.
 export function wasted(S) {
   if (S.ui.screen !== 'playing') return;
   S.ui.screen = 'wasted';

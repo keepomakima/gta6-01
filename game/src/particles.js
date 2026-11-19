@@ -1,6 +1,4 @@
-// NEON TIDE v6-rebuild-2 — particles.js
-// Lightweight particle pool (exhaust, muzzle flash, crash sparks, NOS flame)
-// plus tire-mark trails and screen shake. Rendered as THREE.Points by render.js.
+// NEON TIDE v7 "Golden Hour" — particles.js
 export function createParticles() {
   return { list: [], marks: [], shake: 0 };
 }
@@ -46,7 +44,6 @@ export function updateParticles(S, dt) {
   S.shake = P.shake;
 }
 
-// Exhaust puffs while driving, and the blue NOS flame while boosting.
 export function exhaustTick(S, dt) {
   const P = S.player;
   if (P.car && Math.abs(P.car.speed) > 30 && Math.random() < dt * 20) {

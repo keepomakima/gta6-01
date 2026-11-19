@@ -1,7 +1,7 @@
-// NEON TIDE v6-rebuild-2 — main.js
-// Game loop, player driving/walking, car enter/exit, save/load, and the
-// debug API the headless playtest uses (window.__game). Everything else is
-// delegated to the focused modules in this folder.
+// NEON TIDE v7 "Golden Hour" — main.js
+// v7: the intro cutscene plays on New Game (skippable); a cutscene freezes
+// the world while it is on screen; the finale cutscene plays when the game
+// is won (see missions.js completeMission).
 import { Input } from './input.js';
 import { buildWorld, streetLamps } from './world.js';
 import { makePlayer, makeCar } from './entities.js';
@@ -18,6 +18,12 @@ import { createAudio, resumeAudio, radioTick, nextStation, sirenTick, sfxShot, s
 import { initRenderer, updateRender } from './render.js';
 import { updateHUD, showScreen } from './hud.js';
 import { applyShot } from './shots.js';
+import { createCutscene, startCutscene, advanceCutscene, skipCutscene, INTRO_SCENES } from './cutscene.js';
+import { createTrophyCase, checkTrophies, trophySaveIds, trophyLoadIds } from './achievements.js';
+import { createChatter, chatterTick } from './chatter.js';
+import { createStunts, updateStunts } from './stunts.js';
+import { createStats, updateStats, statsSaveRecords, statsLoadRecords } from './stats.js';
+import { updatePedRoles } from './pedestrians.js';
 import { SAVE_KEY, SEED, DEBT_START, CAR_TYPES, WEAPONS } from './config.js';
 
 const params = new URLSearchParams(location.search);
@@ -34,6 +40,11 @@ export function createState() {
     heli: { active: false, x: 0, y: 52, z: 0, targetX: 0, targetZ: 0, rotor: 0, strobe: 0 },
     wanted: 0, lastSeenAt: -100, wantedTimer: 0, bustedTimer: 0,
     missions: createMissions(),
+    cutscene: createCutscene(),
+    achievements: createTrophyCase(),
+    chatter: createChatter(),
+    stunts: createStunts(),
+    stats: createStats(),
     garage: createGarage(),
     weather: createWeather(),
     particles: createParticles(),
@@ -63,7 +74,8 @@ function saveGame() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       money: P.money, x: P.x, z: P.z, debt: S.debt,
       completed: S.completedCount, garage: S.garage, weapon: P.weapon,
-      missionsIndex: S.missions.index,
+      missionsIndex: S.missions.index, trophies: trophySaveIds(S),
+      records: statsSaveRecords(S),
     }));
   } catch { /* storage unavailable (headless file://) — non-fatal */ }
 }
@@ -79,13 +91,12 @@ function loadGame() {
     S.completedCount = d.completed ?? 0;
     Object.assign(S.garage, d.garage || {});
     S.player.weapon = d.weapon || 'pistol';
+    trophyLoadIds(S, d.trophies);
+    statsLoadRecords(S, d.records);
     return true;
   } catch { return false; }
 }
 
-// --- Player movement: on foot (WASD, Shift run) or driving (WASD + Space
-// handbrake, Shift NOS). Teleport resets speed — a teleporting car that kept
-// its speed used to overshoot and bounce off buildings in earlier builds.
 function updatePlayer(dt) {
   const P = S.player;
   const I = S.input;
@@ -111,10 +122,6 @@ function updatePlayer(dt) {
     }
     car.x = c.x; car.z = c.z;
     P.x = car.x; P.z = car.z; P.heading = car.heading; P.speed = car.speed;
-    if (Math.abs(car.speed) > 100 && Math.random() < dt * 8) {
-      // Tire marks on hard turns.
-    }
-    // Car condition: wrecked at 0 -> player is thrown out on foot.
     if (car.cond <= 0) {
       exitCar(S);
       S.flash = 'Car wrecked!';
@@ -128,7 +135,6 @@ function updatePlayer(dt) {
     if (I.lf) mx -= 1;
     if (I.rt) mx += 1;
     if (mx !== 0 || mz !== 0) {
-      // Movement is camera-relative: forward is the camera heading.
       const camH = P.heading;
       const fx = Math.sin(camH), fz = Math.cos(camH);
       const rx = Math.cos(camH), rz = -Math.sin(camH);
@@ -143,12 +149,9 @@ function updatePlayer(dt) {
       P.speed = speed;
     } else P.speed = 0;
   }
-  // Aim heading: mouse position relative to screen centre.
   const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
   const mdx = S.input.mouse.x - cx, mdy = S.input.mouse.y - cy;
   if (Math.abs(mdx) + Math.abs(mdy) > 10) {
-    // Screen up (-y) is world forward from the camera; approximate the aim
-    // heading from the mouse angle around the player.
     S.aimHeading = P.heading + Math.atan2(mdx, -mdy) * 0.9;
   }
 }
@@ -168,12 +171,9 @@ function nearestCar(maxD = 14) {
 function tryEnterExit() {
   const P = S.player;
   if (P.car) {
-    // E in a car near a shop exits first (shops.js handles the shop case);
-    // otherwise E just exits the car.
     if (!handleInteract(S)) exitCar(S);
     return;
   }
-  // On foot: shops/safehouses beat cars (handleInteract returns true then).
   if (handleInteract(S)) return;
   const car = nearestCar(14);
   if (car) {
@@ -184,8 +184,6 @@ function tryEnterExit() {
   }
 }
 
-// --- World update: the kill hook counts enemies before vs after, so a kill
-// is only counted when an enemy actually leaves the world.
 function updateWorld(dt) {
   const before = S.enemies.length;
   updatePlayer(dt);
@@ -193,8 +191,6 @@ function updateWorld(dt) {
   updatePolice(S, dt);
   updateHeli(S, dt);
   if (!S.shotMode) updateEnemies(S, dt); // frozen for staged screenshots:
-  // otherwise the pier sentries keep shooting the staged player (HP 96 in
-  // the first pier shot) and bosses wander out of frame
   const died = before - S.enemies.length;
   if (died > 0) {
     S.killsTotal += died;
@@ -202,12 +198,16 @@ function updateWorld(dt) {
   }
   updateMissions(S, dt);
   updateHeatWave(S, dt);
+  updateStunts(S, dt);
+  updateStats(S, dt);
+  checkTrophies(S);
+  chatterTick(S);
+  updatePedRoles(S);
   updateWeather(S, dt);
   updateParticles(S, dt);
   exhaustTick(S, dt);
   radioTick(S, dt);
   sirenTick(S, dt);
-  // Health regen (slow) and wasted check.
   const P = S.player;
   if (P.health > 0 && P.health < 100 && S.time - P.lastDamageAt > 8) {
     P.health = Math.min(100, P.health + 4 * dt);
@@ -218,8 +218,6 @@ function updateWorld(dt) {
   if (S.flashTimer > 3) { S.flash = ''; S.flashTimer = 0; }
 }
 
-// --- Debug / playtest API (window.__game). Used by the headless playtest
-// scripts; harmless in normal play.
 function makeDebugAPI(S) {
   return {
     S,
@@ -273,12 +271,13 @@ function makeDebugAPI(S) {
     press(code) { S.input.press(code); },
     release(code) { S.input.release(code); },
     startGame() { beginPlay(false); },
+    skipCutscene() { skipCutscene(S); },
+    startIntro() { startCutscene(S, INTRO_SCENES); },
     saveGame,
     loadGame,
   };
 }
 
-// --- Screens and input routing.
 function beginPlay(fresh) {
   if (fresh) {
     S.player.money = 250;
@@ -291,6 +290,8 @@ function beginPlay(fresh) {
   S.ui.screen = 'playing';
   showScreen(S, null);
   resumeAudio(S.audio);
+  // v7: a fresh game opens with the intro cutscene (Kestrel vs Deke).
+  if (fresh) startCutscene(S, INTRO_SCENES);
 }
 
 function nextMissionOrRetry() {
@@ -304,6 +305,12 @@ function nextMissionOrRetry() {
 
 function handleKeys() {
   const I = S.input;
+  // A cutscene eats input first: Enter/Space advance, Esc skips.
+  if (S.cutscene.active) {
+    if (I.advance) advanceCutscene(S);
+    if (I.pause) skipCutscene(S);
+    return;
+  }
   if (I.pause) {
     if (S.ui.screen === 'playing') { S.ui.screen = 'paused'; showScreen(S, 'pause-screen'); }
     else if (S.ui.screen === 'paused') { S.ui.screen = 'playing'; showScreen(S, null); }
@@ -340,11 +347,9 @@ function handleKeys() {
   }
 }
 
-// --- Boot.
 function boot() {
   S.input.attach(window);
   initRenderer(S);
-  // Shop buttons.
   document.querySelectorAll('[data-buy]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const msg = shopBuy(S, btn.dataset.buy);
@@ -368,9 +373,12 @@ function boot() {
   if (retryBtn) retryBtn.addEventListener('click', () => nextMissionOrRetry());
   const restartBtn = document.getElementById('btn-restart');
   if (restartBtn) restartBtn.addEventListener('click', () => beginPlay(true));
+  const cutBtn = document.getElementById('cs-next');
+  if (cutBtn) cutBtn.addEventListener('click', () => advanceCutscene(S));
+  const cutSkip = document.getElementById('cs-skip');
+  if (cutSkip) cutSkip.addEventListener('click', () => skipCutscene(S));
 
   if (SHOT) {
-    // Screenshot mode: skip the title screen, stage the shot.
     S.ui.screen = 'playing';
     showScreen(S, null);
     applyShot(S, SHOT);
@@ -383,8 +391,6 @@ function boot() {
   function frame(now) {
     const rawDt = Math.min(0.1, (now - last) / 1000);
     last = now;
-    // End screens (busted / wasted / won) are shown here, not in police.js
-    // (which cannot import the HUD without a module cycle).
     if (S.ui.screen !== lastScreen) {
       lastScreen = S.ui.screen;
       const title = document.getElementById('end-title');
@@ -403,12 +409,14 @@ function boot() {
         showScreen(S, 'end-screen');
       }
     }
-    // Headless swiftshader runs ~4 fps; game time still advances per frame.
     const dt = rawDt;
     if (S.ui.screen === 'playing' || SHOT) {
       S.time += dt;
       handleKeys();
-      if (S.ui.screen === 'playing' || SHOT) updateWorld(dt);
+      // A live cutscene freezes the world (staged shots exempt: their
+      // systems are already frozen individually, and peds keep walking).
+      const frozen = S.cutscene.active && !SHOT;
+      if ((S.ui.screen === 'playing' || SHOT) && !frozen) updateWorld(dt);
     } else {
       handleKeys();
     }
