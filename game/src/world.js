@@ -1,7 +1,9 @@
-// NEON TIDE v7 "Golden Hour" — world.js
-// v7: each building carries a facade index (shared canvas window texture),
-// a warm district-tinted palette, and rooftop props; the world also places
-// palm trees, traffic lights, billboards and benches for the street layer.
+// NEON TIDE v7-coverfix — world.js (structural pass)
+// The city: each building carries a facade index (shared canvas window
+// texture), a warm district-tinted palette, and rooftop props; the world
+// also places palm trees, traffic lights, billboards and benches for the
+// street layer. The building layout is seeded, so the city is identical
+// on every run — the RNG call order in buildWorld must not change.
 import { RNG } from './random.js';
 import { SEED, districtAt } from './config.js';
 
@@ -20,32 +22,38 @@ const PALETTES = {
 export function buildWorld() {
   const rng = new RNG(SEED);
   const buildings = [];
-  for (let bx = -1000; bx <= 1000; bx += 200) {
-    for (let bz = -700; bz <= 700; bz += 200) {
+  let bx = -1000;
+  while (bx <= 1000) {
+    let bz = -700;
+    while (bz <= 700) {
       const cx = bx + 100, cz = bz + 100;
-      if (cx > 600 && cz < -400) continue;
-      if (cx < -700 && cz > 500) continue;
-      if (cx === 300 && cz === 500) continue; // casino plaza
+      if (cx > 600 && cz < -400) { bz += 200; continue; }
+      if (cx < -700 && cz > 500) { bz += 200; continue; }
+      if (cx === 300 && cz === 500) { bz += 200; continue; } // casino plaza
       const district = districtAt(cx, cz);
       const tall = district === 'Downtown';
       const count = rng.int(1, 3);
-      for (let i = 0; i < count; i++) {
+      let i = 0;
+      while (i < count) {
         const w = rng.range(28, 62), d = rng.range(28, 62);
         const ox = rng.range(-45, 45), oz = rng.range(-45, 45);
         const x = cx + ox, z = cz + oz;
-        if (Math.abs(x) > 1080 || Math.abs(z) > 730) continue;
+        if (Math.abs(x) > 1080 || Math.abs(z) > 730) { i += 1; continue; }
         const h = tall ? rng.range(30, 95) : rng.range(8, 34);
         const palette = PALETTES[district] || PALETTES.Downtown;
         buildings.push({
-          x, z, w, d, h,
+          x: x, z: z, w: w, d: d, h: h,
           color: rng.pick(palette),
-          district,
+          district: district,
           lit: rng.chance(0.85), // 85% of windows lit at night
           facade: rng.int(0, 5), // shared canvas window texture
           roof: rng.pick(['ac', 'antenna', 'tower', 'none', 'ac']),
         });
+        i += 1;
       }
+      bz += 200;
     }
+    bx += 200;
   }
   const casino = { x: 300, z: 500, w: 120, d: 70, h: 26, color: 0x8a1a5a, district: 'Neon Mile', lit: true, casino: true, facade: 2, roof: 'none' };
   buildings.push(casino);
@@ -55,17 +63,20 @@ export function buildWorld() {
 
   // Palm trees along the Beachfront and Marina shore roads.
   const palms = [];
-  for (let x = -1000; x <= 1000; x += 100) {
-    palms.push({ x, z: 720 });
-    if (x % 200 === 0) palms.push({ x: x + 50, z: 690 });
+  let px = -1000;
+  while (px <= 1000) {
+    palms.push({ x: px, z: 720 });
+    if (px % 200 === 0) palms.push({ x: px + 50, z: 690 });
+    px += 100;
   }
-  for (let z = 500; z <= 700; z += 100) palms.push({ x: -1080, z });
+  let pz = 500;
+  while (pz <= 700) { palms.push({ x: -1080, z: pz }); pz += 100; }
 
   // Traffic lights at the busiest downtown intersections.
   const lights = [];
-  for (const [x, z] of [[0, 0], [200, 0], [-200, 200], [0, -200], [400, 200], [-400, -200], [200, 400], [0, 400]]) {
+  [[0, 0], [200, 0], [-200, 200], [0, -200], [400, 200], [-400, -200], [200, 400], [0, 400]].forEach(([x, z]) => {
     lights.push({ x: x + 15, z: z + 15, phase: (x + z) % 2 === 0 ? 0 : 1 });
-  }
+  });
 
   // Billboards: big ad faces on the Neon Mile and Downtown.
   const billboards = [
@@ -77,38 +88,48 @@ export function buildWorld() {
 
   // Benches along the Beachfront boardwalk and the club plaza.
   const benches = [];
-  for (let x = -800; x <= 800; x += 200) benches.push({ x, z: 700 });
+  let bx2 = -800;
+  while (bx2 <= 800) { benches.push({ x: bx2, z: 700 }); bx2 += 200; }
   benches.push({ x: 20, z: 120 }, { x: -20, z: 120 });
 
   return {
-    buildings,
-    casino,
-    palms,
-    lights,
-    billboards,
-    benches,
+    buildings: buildings,
+    casino: casino,
+    palms: palms,
+    lights: lights,
+    billboards: billboards,
+    benches: benches,
     pier: { x0: -1100, x1: -980, z0: 620, z1: 750, top: 0.4 },
     runway: { x0: 650, x1: 1100, z0: -750, z1: -500 },
     collideCircle(x, z, r) {
       let nx = x, nz = z;
-      for (const b of buildings) {
+      buildings.forEach((b) => {
         const hw = b.w / 2 + r, hd = b.d / 2 + r;
         if (Math.abs(nx - b.x) < hw && Math.abs(nz - b.z) < hd) {
           const px = hw - Math.abs(nx - b.x);
           const pz = hd - Math.abs(nz - b.z);
-          if (px < pz) nx = b.x + (nx < b.x ? -hw : hw);
-          else nz = b.z + (nz < b.z ? -hd : hd);
+          // Push out along the shallower axis — the cheaper escape.
+          if (px < pz) {
+            if (nx < b.x) nx = b.x - hw;
+            else nx = b.x + hw;
+          } else {
+            if (nz < b.z) nz = b.z - hd;
+            else nz = b.z + hd;
+          }
         }
-      }
-      nx = Math.max(-1090, Math.min(1090, nx));
-      nz = Math.max(-740, Math.min(740, nz));
+      });
+      if (nx > 1090) nx = 1090;
+      if (nx < -1090) nx = -1090;
+      if (nz > 740) nz = 740;
+      if (nz < -740) nz = -740;
       return { x: nx, z: nz };
     },
     buildingAt(x, z) {
-      for (const b of buildings) {
-        if (Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2) return b;
-      }
-      return null;
+      let found = null;
+      buildings.forEach((b) => {
+        if (!found && Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2) found = b;
+      });
+      return found;
     },
     onPier(x, z) {
       const p = this.pier;
@@ -123,17 +144,24 @@ export function isOnRoad(x, z) {
   return rx <= 13 || rz <= 13;
 }
 
-// Lamps stand MID-BLOCK (offset 100 along the road from each intersection),
-// never at the intersection corners: the chase camera trails 16 units
-// behind the car on the road line, and a corner lamp 2.5 units from the
-// camera rendered as a giant cream blob that filled the whole frame.
+// Lamps stand MID-BLOCK (offset 100 along the road from each
+// intersection), never at the intersection corners: the chase camera
+// trails 16 units behind the car on the road line, and a corner lamp
+// 2.5 units from the camera rendered as a giant cream blob that filled
+// the whole frame.
 export function streetLamps() {
   const lamps = [];
-  for (let x = -1000; x <= 1000; x += 200) {
-    for (let z = -600; z <= 600; z += 200) lamps.push({ x: x + 14, z: z + 100 });
+  let x = -1000;
+  while (x <= 1000) {
+    let z = -600;
+    while (z <= 600) { lamps.push({ x: x + 14, z: z + 100 }); z += 200; }
+    x += 200;
   }
-  for (let z = -600; z <= 600; z += 200) {
-    for (let x = -1000; x <= 1000; x += 200) lamps.push({ x: x + 100, z: z + 14 });
+  let z = -600;
+  while (z <= 600) {
+    let x2 = -1000;
+    while (x2 <= 1000) { lamps.push({ x: x2 + 100, z: z + 14 }); x2 += 200; }
+    z += 200;
   }
   return lamps;
 }

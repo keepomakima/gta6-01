@@ -1,16 +1,6 @@
-// NEON TIDE v7 "Golden Hour" — random.js
-// Deterministic seeded RNG (mulberry32) so the city, traffic, pedestrians
-// and screenshots are identical on every run from the same seed.
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function next() {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
+// NEON TIDE v7-coverfix — random.js
+// Seeded RNG (mulberry32): the city, traffic, pedestrians and screenshots
+// are identical on every run from the same seed.
 export class RNG {
   constructor(seed) { this.next = mulberry32(seed); }
   range(a, b) { return a + this.next() * (b - a); }
@@ -27,6 +17,17 @@ export class RNG {
   }
 }
 
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// A random point on a road: pick a road line, then a position along it.
 export function randomRoadPoint(rng) {
   const vertical = rng.chance(0.5);
   const line = rng.int(-5, 5) * 200;
@@ -34,6 +35,7 @@ export function randomRoadPoint(rng) {
   return vertical ? { x: line, z: along } : { x: along, z: line };
 }
 
+// The heading traffic drives on the road nearest a point.
 export function roadHeading(x, z) {
   const rx = Math.round(x / 200) * 200;
   const rz = Math.round(z / 200) * 200;

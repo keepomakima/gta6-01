@@ -1,10 +1,18 @@
-// NEON TIDE v7 "Golden Hour" — pedestrians.js (NEW in v7)
+// NEON TIDE v7-coverfix — pedestrians.js
 // The living city v6r2 lacked: animated pedestrians with swinging legs,
 // a bobbing walk cycle, varied shirts / pants / skin, and a few that stand
 // still chatting on the boardwalk. Rendering only — movement lives in
 // traffic.js (updatePeds), data in entities.js (makePed).
 // A ped mesh is a small group: torso (shirt), head (skin), two legs (pants)
 // that swing opposite each other with the walk phase, plus a bob.
+
+function makeLeg(legMat, side) {
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.0, 0.4), legMat);
+  leg.geometry.translate(0, -0.5, 0);
+  leg.position.set(side * 0.22, 1.0, 0);
+  return leg;
+}
+
 export function pedMeshFor(R, ped) {
   let m = R.pedMeshes.get(ped.id);
   if (m) return m;
@@ -19,13 +27,9 @@ export function pedMeshFor(R, ped) {
   head.position.y = 2.35;
   g.add(head);
   const legMat = new THREE.MeshStandardMaterial({ color: ped.pants, roughness: 0.9 });
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.0, 0.4), legMat);
-  legL.geometry.translate(0, -0.5, 0);
-  legL.position.set(-0.22, 1.0, 0);
+  const legL = makeLeg(legMat, -1);
+  const legR = makeLeg(legMat, 1);
   g.add(legL);
-  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.0, 0.4), legMat);
-  legR.geometry.translate(0, -0.5, 0);
-  legR.position.set(0.22, 1.0, 0);
   g.add(legR);
   g.userData.legL = legL;
   g.userData.legR = legR;

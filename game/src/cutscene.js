@@ -1,4 +1,4 @@
-// NEON TIDE v7 "Golden Hour" — cutscene.js (NEW in v7)
+// NEON TIDE v7-coverfix — cutscene.js
 // Cutscene / dialog system: the story layer v6r2 never had. Letterboxed
 // portrait panels with the speaker's name, colour and initials, advanced
 // with Enter / Space / click, skippable. The world freezes while a cutscene
@@ -64,6 +64,16 @@ export function startCutscene(S, lines) {
   S.missions.frozen = true;
 }
 
+export function endCutscene(S) {
+  const C = S.cutscene;
+  C.active = false;
+  C.lines = [];
+  C.index = 0;
+  C.who = null;
+  C.text = '';
+  S.missions.frozen = false;
+}
+
 // Advance one line; returns true when the cutscene just ended.
 export function advanceCutscene(S) {
   const C = S.cutscene;
@@ -76,16 +86,6 @@ export function advanceCutscene(S) {
   C.who = C.lines[C.index].who;
   C.text = C.lines[C.index].text;
   return false;
-}
-
-export function endCutscene(S) {
-  const C = S.cutscene;
-  C.active = false;
-  C.lines = [];
-  C.index = 0;
-  C.who = null;
-  C.text = '';
-  S.missions.frozen = false;
 }
 
 export function skipCutscene(S) {

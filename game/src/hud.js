@@ -1,8 +1,10 @@
-// NEON TIDE v7 "Golden Hour" — hud.js
-// (missions.index === 13). v7: the cutscene panel (portrait + speaker +
-// line + letterbox) is drawn here from S.cutscene / S.dialog.who.
+// NEON TIDE v7-coverfix — hud.js (structural pass)
+// DOM HUD: vitals, wanted stars, objective, minimap, dialog and the
+// cutscene portrait panel. In shot mode the four v7 layers (chatter,
+// trophy toast, stunt banner, career strip) are hidden so staged
+// frames stay clean — the classic HUD still shows.
 import { MISSIONS } from './missions.js';
-import { districtAt, WEAPONS } from './config.js';
+import { WEAPONS, districtAt } from './config.js';
 import { clockString } from './weather.js';
 import { interactPrompt } from './shops.js';
 import { CHARACTERS } from './cutscene.js';
@@ -12,178 +14,196 @@ import { statSummary } from './stats.js';
 
 function $(id) { return document.getElementById(id); }
 
+function setText(id, text) {
+  const el = $(id);
+  if (el) el.textContent = text;
+}
+
 export function updateHUD(S) {
-  const P = S.player;
-  const el = (id, text) => { const n = $(id); if (n) n.textContent = text; };
-  el('hud-health', `HP ${Math.max(0, Math.ceil(P.health))}${P.armor > 0 ? ` +${Math.ceil(P.armor)} armor` : ''}`);
-  el('hud-money', `$${P.money.toLocaleString()}`);
-  el('hud-debt', `Debt $${S.debt.toLocaleString()}`);
-  el('hud-clock', clockString(S));
-  el('hud-district', districtAt(P.x, P.z));
-  el('hud-station', S.audio ? `♪ ${['Tide FM', 'Neon Nights', 'Harbor Rock'][S.audio.station]}` : '');
+  const pl = S.player;
+  const shot = !!S.shotMode;
+  // Staged frames hide the four v7 layers outright; an empty toast div
+  // would otherwise render as a small gold-bordered pill at the top.
+  ['hud-chatter', 'hud-toast', 'hud-stunt', 'hud-stats'].forEach((id) => {
+    const el = $(id);
+    if (el) el.style.display = shot ? 'none' : '';
+  });
+  let hp = `HP ${Math.max(0, Math.ceil(pl.health))}`;
+  if (pl.armor > 0) hp += ` +${Math.ceil(pl.armor)} armor`;
+  setText('hud-health', hp);
+  setText('hud-money', `$${pl.money.toLocaleString()}`);
+  setText('hud-debt', `Debt $${S.debt.toLocaleString()}`);
+  setText('hud-clock', clockString(S));
+  setText('hud-district', districtAt(pl.x, pl.z));
+  let station = '';
+  if (S.audio) station = `♪ ${['Tide FM', 'Neon Nights', 'Harbor Rock'][S.audio.station]}`;
+  setText('hud-station', station);
   const stars = $('hud-wanted');
   if (stars) {
     stars.textContent = '★'.repeat(S.wanted) + '☆'.repeat(5 - S.wanted);
-    stars.style.color = S.wanted >= 4 ? '#ff3333' : '#ffd21a';
+    if (S.wanted >= 4) stars.style.color = '#ff3333';
+    else stars.style.color = '#ffd21a';
   }
-  const w = WEAPONS[P.weapon];
-  const ammo = P.ammo[P.weapon];
-  el('hud-weapon', `${w.name} ${ammo === undefined || ammo === Infinity ? '∞' : ammo}`);
-  const speed = P.car ? Math.abs(P.car.speed) * 2.2 : Math.abs(P.speed) * 2.2;
-  el('hud-speed', P.car ? `${Math.round(speed)} km/h ${P.car.type.toUpperCase()}` : 'On foot');
-  const nos = $('hud-nos');
-  if (nos) {
-    nos.style.width = `${(S.garage.nos > 0 ? (P.car ? P.car.nos : S.garage.nosTank) / [0, 100, 160, 240][S.garage.nos] * 100 : 0)}%`;
-    nos.parentElement.style.display = S.garage.nos > 0 ? 'block' : 'none';
+  const w = WEAPONS[pl.weapon];
+  const a = pl.ammo[pl.weapon];
+  let ammoText = a;
+  if (a === undefined || a === Infinity) ammoText = '∞';
+  setText('hud-weapon', `${w.name} ${ammoText}`);
+  const v = pl.car ? Math.abs(pl.car.speed) * 2.2 : Math.abs(pl.speed) * 2.2;
+  if (pl.car) setText('hud-speed', `${Math.round(v)} km/h ${pl.car.type.toUpperCase()}`);
+  else setText('hud-speed', 'On foot');
+  const nosEl = $('hud-nos');
+  if (nosEl) {
+    nosEl.style.width = `${(S.garage.nos > 0 ? (pl.car ? pl.car.nos : S.garage.nosTank) / [0, 100, 160, 240][S.garage.nos] * 100 : 0)}%`;
+    nosEl.parentElement.style.display = S.garage.nos > 0 ? 'block' : 'none';
   }
-  const M = S.missions;
-  let obj = 'Free roam — press Enter for the next mission';
-  if (M.mode === 'playing' && MISSIONS[M.index]) {
-    const def = MISSIONS[M.index];
-    const step = def.steps[M.step];
-    obj = `M${M.index + 1} ${def.name}: ${step ? step.label : ''}`;
-    if (step && step.timer) obj += ` — ${Math.max(0, Math.ceil(M.timer))}s`;
-    if (step && step.type === 'kill') obj += ` (${S.killsTotal - M.killsAtStart}/${step.n})`;
-    if (step && step.type === 'collect') obj += ` (${M.crates.filter((c) => c.taken).length}/${step.n})`;
-    if (step && step.type === 'race') obj += ` (gate ${M.gateIndex + 1}/${M.gates.length})`;
-    if (step && step.type === 'tail') obj += ` (${Math.floor(M.tailTime)}/${step.need}s)`;
-  } else if (M.mode === 'complete') obj = 'Mission complete — press Enter for the next';
-  else if (M.mode === 'failed') obj = 'Mission failed — press Enter to retry';
-  else if (M.mode === 'won') obj = 'King of Port Solano — you own the city!';
-  el('hud-objective', obj);
-  const hw = S.heatwave;
-  el('hud-heatwave', hw.active ? `HEAT WAVE ${Math.floor(hw.elapsed)}s — score ${hw.score}` : '');
-  // Screenshot mode: hide the new v7 HUD layers (chatter, trophy toast,
-  // stunt banner, career strip) so the staged frames stay clean — the
-  // classic HUD (objective, wanted, minimap, dialog) still shows. The
-  // toast div has a gold border, so an empty one would render as a small
-  // pill at the top of the frame; display:none removes it entirely.
-  const shotMode = !!S.shotMode;
-  for (const id of ['hud-chatter', 'hud-toast', 'hud-stunt', 'hud-stats']) {
-    const n = $(id);
-    if (n) n.style.display = shotMode ? 'none' : '';
+  const ms = S.missions;
+  let line = 'Free roam — press Enter for the next mission';
+  if (ms.mode === 'playing' && MISSIONS[ms.index]) {
+    const def = MISSIONS[ms.index];
+    const st = def.steps[ms.step];
+    line = `M${ms.index + 1} ${def.name}: ${st ? st.label : ''}`;
+    if (st && st.timer) line += ` — ${Math.max(0, Math.ceil(ms.timer))}s`;
+    if (st) {
+      switch (st.type) {
+        case 'kill': line += ` (${S.killsTotal - ms.killsAtStart}/${st.n})`; break;
+        case 'collect': line += ` (${ms.crates.filter((c) => c.taken).length}/${st.n})`; break;
+        case 'race': line += ` (gate ${ms.gateIndex + 1}/${ms.gates.length})`; break;
+        case 'tail': line += ` (${Math.floor(ms.tailTime)}/${st.need}s)`; break;
+        default: break;
+      }
+    }
+  } else if (ms.mode === 'complete') line = 'Mission complete — press Enter for the next';
+  else if (ms.mode === 'failed') line = 'Mission failed — press Enter to retry';
+  else if (ms.mode === 'won') line = 'King of Port Solano — you own the city!';
+  setText('hud-objective', line);
+  const heat = S.heatwave;
+  let heatText = '';
+  if (heat.active) heatText = `HEAT WAVE ${Math.floor(heat.elapsed)}s — score ${heat.score}`;
+  setText('hud-heatwave', heatText);
+  if (!shot) {
+    setText('hud-chatter', S.chatter && S.chatter.line ? S.chatter.line : '');
+    const t = currentToast(S);
+    if (t) setText('hud-toast', `★ ${t.name} — ${t.blurb}`);
+    else setText('hud-toast', '');
+    setText('hud-stunt', stuntPopup(S));
+    setText('hud-stats', statSummary(S));
   }
-  if (!shotMode) {
-    // Chatter ticker: dispatch, DJ, or street gossip under the objective.
-    el('hud-chatter', S.chatter && S.chatter.line ? S.chatter.line : '');
-    // Trophy banner: a gold toast for a few seconds when one unlocks.
-    const toast = currentToast(S);
-    el('hud-toast', toast ? `★ ${toast.name} — ${toast.blurb}` : '');
-    // Stunt payout banner: near misses and drifts, big and brief.
-    el('hud-stunt', stuntPopup(S));
-    // Career strip: style, top speed, distance, earnings — once playing.
-    el('hud-stats', statSummary(S));
-  }
-  const det = $('hud-detection');
-  if (det) {
-    const show = M.mode === 'playing' && M.index === 13;
-    det.style.display = show ? 'block' : 'none';
-    if (show) {
-      det.querySelector('.det-fill').style.width = `${M.detection}%`;
-      det.querySelector('.det-label').textContent = `DETECTED ${Math.floor(M.detection)}%`;
+  const detEl = $('hud-detection');
+  if (detEl) {
+    const on = ms.mode === 'playing' && ms.index === 13;
+    if (on) detEl.style.display = 'block';
+    else detEl.style.display = 'none';
+    if (on) {
+      detEl.querySelector('.det-fill').style.width = `${ms.detection}%`;
+      detEl.querySelector('.det-label').textContent = `DETECTED ${Math.floor(ms.detection)}%`;
     }
   }
-  // Dialog line + cutscene portrait panel (v7).
   drawDialog(S);
-  const flash = $('hud-flash');
-  if (flash) flash.textContent = S.flash || '';
-  el('hud-prompt', S.ui.screen === 'playing' ? interactPrompt(S) : '');
+  const flashEl = $('hud-flash');
+  if (flashEl) flashEl.textContent = S.flash || '';
+  setText('hud-prompt', S.ui.screen === 'playing' ? interactPrompt(S) : '');
   drawMinimap(S);
 }
 
 // Dialog: a cutscene line (portrait panel + letterbox) wins over the plain
 // dialog bar; a briefing line shows the speaker's portrait too.
 export function drawDialog(S) {
-  const panel = $('cutscene');
-  const dlg = $('hud-dialog');
-  const C = S.cutscene;
-  if (C && C.active) {
-    const ch = CHARACTERS[C.who] || CHARACTERS.deke;
-    if (panel) {
-      panel.style.display = 'flex';
-      const face = panel.querySelector('.cs-face');
-      const name = panel.querySelector('.cs-name');
-      const text = panel.querySelector('.cs-text');
-      if (face) { face.textContent = ch.short; face.style.background = ch.color; }
-      if (name) { name.textContent = ch.name; name.style.color = ch.color; }
-      if (text) text.textContent = C.text;
-      panel.querySelector('.cs-hint').textContent = 'Enter / Space — continue · Esc — skip';
+  const csPanel = $('cutscene');
+  const bar = $('hud-dialog');
+  const cut = S.cutscene;
+  if (cut && cut.active) {
+    const who = CHARACTERS[cut.who] ? CHARACTERS[cut.who] : CHARACTERS.deke;
+    if (csPanel) {
+      csPanel.style.display = 'flex';
+      const f = csPanel.querySelector('.cs-face');
+      const n = csPanel.querySelector('.cs-name');
+      const t = csPanel.querySelector('.cs-text');
+      if (f) { f.textContent = who.short; f.style.background = who.color; }
+      if (n) { n.textContent = who.name; n.style.color = who.color; }
+      if (t) t.textContent = cut.text;
+      csPanel.querySelector('.cs-hint').textContent = 'Enter / Space — continue · Esc — skip';
     }
-    if (dlg) dlg.textContent = '';
+    if (bar) bar.textContent = '';
     return;
   }
-  if (panel) panel.style.display = 'none';
-  if (dlg) {
+  if (csPanel) csPanel.style.display = 'none';
+  if (bar) {
     const d = S.dialog;
     if (d && S.time < d.until) {
       // Briefing lines carry a speaker: show their portrait inline.
       if (d.who && CHARACTERS[d.who]) {
-        const ch = CHARACTERS[d.who];
-        dlg.innerHTML = '';
+        const who = CHARACTERS[d.who];
+        bar.innerHTML = '';
         const face = document.createElement('span');
         face.className = 'dlg-face';
-        face.textContent = ch.short;
-        face.style.background = ch.color;
-        dlg.appendChild(face);
+        face.textContent = who.short;
+        face.style.background = who.color;
+        bar.appendChild(face);
         const span = document.createElement('span');
-        span.textContent = ' ' + d.text;
-        dlg.appendChild(span);
+        span.textContent = ' '.concat(d.text);
+        bar.appendChild(span);
       } else {
-        dlg.textContent = d.text;
+        bar.textContent = d.text;
       }
-    } else dlg.textContent = '';
+    } else bar.textContent = '';
   }
 }
 
-// (grey), police (blue/red), mission marker (yellow), enemies (red), heli,
-// and pedestrians (pale dots — the living city shows on the map too).
+// Minimap: roads (grey), police (blue/red), mission marker (yellow),
+// enemies (red), heli, and pedestrians (pale dots).
 export function drawMinimap(S) {
-  const cv = $('minimap');
-  if (!cv) return;
-  const ctx = cv.getContext('2d');
-  const W = cv.width, H = cv.height;
-  const sx = (x) => (x + 1100) / 2200 * W;
-  const sz = (z) => (z + 750) / 1500 * H;
-  ctx.fillStyle = '#101018';
-  ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = '#333344';
-  ctx.lineWidth = 1;
-  for (let x = -1000; x <= 1000; x += 200) {
-    ctx.beginPath(); ctx.moveTo(sx(x), 0); ctx.lineTo(sx(x), H); ctx.stroke();
+  const c = $('minimap');
+  if (!c) return;
+  const g = c.getContext('2d');
+  const w = c.width, h = c.height;
+  function px(x) { return (x + 1100) / 2200 * w; }
+  function pz(z) { return (z + 750) / 1500 * h; }
+  g.fillStyle = '#101018';
+  g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#333344';
+  g.lineWidth = 1;
+  let x = -1000;
+  while (x <= 1000) {
+    g.beginPath(); g.moveTo(px(x), 0); g.lineTo(px(x), h); g.stroke();
+    x += 200;
   }
-  for (let z = -700; z <= 700; z += 200) {
-    ctx.beginPath(); ctx.moveTo(0, sz(z)); ctx.lineTo(W, sz(z)); ctx.stroke();
+  let z = -700;
+  while (z <= 700) {
+    g.beginPath(); g.moveTo(0, pz(z)); g.lineTo(w, pz(z)); g.stroke();
+    z += 200;
   }
-  const dot = (x, z, color, r = 3) => {
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(sx(x), sz(z), r, 0, Math.PI * 2); ctx.fill();
-  };
-  for (const c of S.traffic) dot(c.x, c.z, '#888888', 2);
-  for (const c of S.parked) dot(c.x, c.z, '#aaaaaa', 2);
-  for (const c of S.cruisers) dot(c.x, c.z, '#3355ff', 3);
-  for (const e of S.enemies) dot(e.x, e.z, '#ff3333', 3);
-  for (const p of S.peds) dot(p.x, p.z, '#c2c2d8', 1.5);
-  if (S.heli.active) dot(S.heli.x, S.heli.z, '#ff8800', 4);
+  function mark(x, z, color, r) {
+    if (r === undefined) r = 3;
+    g.fillStyle = color;
+    g.beginPath(); g.arc(px(x), pz(z), r, 0, Math.PI * 2); g.fill();
+  }
+  S.traffic.forEach((car) => mark(car.x, car.z, '#888888', 2));
+  S.parked.forEach((car) => mark(car.x, car.z, '#aaaaaa', 2));
+  S.cruisers.forEach((car) => mark(car.x, car.z, '#3355ff', 3));
+  S.enemies.forEach((foe) => mark(foe.x, foe.z, '#ff3333', 3));
+  S.peds.forEach((p) => mark(p.x, p.z, '#c2c2d8', 1.5));
+  if (S.heli.active) mark(S.heli.x, S.heli.z, '#ff8800', 4);
   if (S.missions.marker) {
-    ctx.fillStyle = '#ffd21a';
-    const mx = sx(S.missions.marker.x), my = sz(S.missions.marker.z);
-    ctx.beginPath(); ctx.moveTo(mx, my - 7); ctx.lineTo(mx + 6, my); ctx.lineTo(mx, my + 7); ctx.lineTo(mx - 6, my); ctx.closePath(); ctx.fill();
+    g.fillStyle = '#ffd21a';
+    const x0 = px(S.missions.marker.x), y0 = pz(S.missions.marker.z);
+    g.beginPath(); g.moveTo(x0, y0 - 7); g.lineTo(x0 + 6, y0); g.lineTo(x0, y0 + 7); g.lineTo(x0 - 6, y0); g.closePath(); g.fill();
   }
-  dot(S.player.x, S.player.z, '#33ff66', 4);
-  ctx.strokeStyle = '#33ff66';
-  ctx.beginPath();
-  ctx.moveTo(sx(S.player.x), sz(S.player.z));
-  ctx.lineTo(sx(S.player.x) + Math.sin(S.player.heading) * 10, sz(S.player.z) + Math.cos(S.player.heading) * 10);
-  ctx.stroke();
+  mark(S.player.x, S.player.z, '#33ff66', 4);
+  g.strokeStyle = '#33ff66';
+  g.beginPath();
+  g.moveTo(px(S.player.x), pz(S.player.z));
+  g.lineTo(px(S.player.x) + Math.sin(S.player.heading) * 10, pz(S.player.z) + Math.cos(S.player.heading) * 10);
+  g.stroke();
 }
 
-export function showScreen(S, name) {
-  for (const id of ['title-screen', 'pause-screen', 'shop-screen', 'end-screen']) {
-    const n = $(id);
-    if (n) n.style.display = 'none';
-  }
-  if (name) {
-    const n = $(name);
-    if (n) n.style.display = 'flex';
+export function showScreen(S, which) {
+  ['title-screen', 'pause-screen', 'shop-screen', 'end-screen'].forEach((id) => {
+    const el = $(id);
+    if (el) el.style.display = 'none';
+  });
+  if (which) {
+    const el = $(which);
+    if (el) el.style.display = 'flex';
   }
 }

@@ -1,4 +1,6 @@
-// NEON TIDE v7 "Golden Hour" — garage.js
+// NEON TIDE v7-coverfix — garage.js (structural pass)
+// Rosa's Garage: four upgrade tracks (engine, grip, armor, NOS), each
+// 0..3, bought with cash. The garage state rides in the save.
 import { UPGRADES, NOS_BOOST, NOS_DRAIN } from './config.js';
 
 export function createGarage() {
@@ -6,7 +8,8 @@ export function createGarage() {
 }
 
 export function upgradeCost(key, level) {
-  return UPGRADES[key].costs[level + 1] ?? null;
+  const c = UPGRADES[key].costs[level + 1];
+  return c === undefined ? null : c;
 }
 
 export function buyUpgrade(S, key) {
@@ -21,6 +24,8 @@ export function buyUpgrade(S, key) {
   return true;
 }
 
+// Full service: $150 restores the car to its (armor-upgraded) max
+// condition and refills the NOS tank.
 export function serviceCar(S) {
   const P = S.player;
   if (!P.car) return false;
@@ -36,10 +41,13 @@ function refillNosTank(S) {
   if (S.player.car) S.player.car.nos = S.garage.nosTank;
 }
 
+// Top speed: engine multiplier, halved while the tires are shredded.
 export function carTopSpeed(S, base) {
   let top = base * UPGRADES.engine.topMul[S.garage.engine];
   const car = S.player.car;
-  if (car && car.tireBurstUntil && S.time < car.tireBurstUntil) top *= 0.45;
+  if (car) {
+    if (car.tireBurstUntil && S.time < car.tireBurstUntil) top *= 0.45;
+  }
   return top;
 }
 
@@ -47,11 +55,14 @@ export function carTurnRate(S, base) {
   return base * UPGRADES.grip.turnMul[S.garage.grip];
 }
 
+// NOS: holding the boost key drains the tank and multiplies accel.
 export function nosBoost(S, boosting, dt) {
   const car = S.player.car;
-  if (!car || S.garage.nos === 0) return 1;
+  if (!car) return 1;
+  if (S.garage.nos === 0) return 1;
   if (boosting && car.nos > 0) {
-    car.nos = Math.max(0, car.nos - NOS_DRAIN * dt);
+    car.nos -= NOS_DRAIN * dt;
+    if (car.nos < 0) car.nos = 0;
     S.garage.nosTank = car.nos;
     S.nosFlame = true;
     return NOS_BOOST;
