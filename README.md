@@ -4,80 +4,71 @@
 [![rank](https://make.fun/badge/gta6-01/keepomakima/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/keepomakima/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-An open-world crime game set in Port Solano at golden hour, built for the
-make.fun "Make GTA 6" bounty. You are Deke Marlowe, back in town and
-$50,000 in debt to Madame Kestrel. The only way out is through her jobs —
-eighteen of them, from a first car theft to a final showdown with Rook
-Reborn.
+An open-world crime game in 3D, set in the coastal city of Port Solano at golden hour. You are Deke Marlowe, a driver who owes $50,000 to Madame Kestrel — and the whole city is the board you play on to pay it back.
 
-The city is rendered in 3D (three.js, WebGL2) under a low western sun:
-eight districts with lit windows, rooftop props, neon signs in Neon Mile,
-palm-lined Beachfront, and a harbor that never really sleeps. Thirty-four
-pedestrians walk the streets with their own routines, twenty traffic cars
-share the roads, and the PSPD answers trouble with cruisers, roadblocks,
-spike strips, PIT maneuvers, and the AIR-1 helicopter once your wanted
-level climbs toward five stars.
+Built with three.js (WebGL2) and a third-person chase camera. The city spans 8 districts: windowed facades, rooftop props, palm trees, billboards, working traffic lights, pedestrians with a walk cycle, and dense, varied traffic with headlights. Any car on the street can be stolen and driven.
 
-## Playing
+## Play
 
-No build step and no install. From the repo root:
-
-```sh
+```bash
 node serve.ts
 ```
 
-Then open <http://localhost:8080> in desktop Chrome.
+Then open http://localhost:8080 in desktop Chrome.
 
-### Controls
-
-| Input | Does |
-|-------|------|
+| Key | Action |
+| --- | --- |
 | WASD | Move on foot / drive |
-| Mouse | Aim — click to shoot |
 | E | Enter or exit a car |
+| Mouse + click | Aim and shoot |
 | 1 / 2 / 3 | Switch weapon |
-| Shift | NOS boost in a car, sprint on foot |
+| Shift | Sprint on foot / NOS while driving |
 | Space | Handbrake |
 | R | Change radio station |
 | Esc | Pause |
 | Enter | Start the next mission / advance a cutscene |
 
-## The story in eighteen jobs
+## The story
 
-| # | Job | The work |
-|---|-----|----------|
-| 1 | Welcome Back | Walk to the Kestrel Club |
-| 2 | Hot Wheels | Steal the Neon GT |
-| 3 | Harbor Run | A delivery against the clock |
-| 4 | Lose the Heat | Escape a 3-star wanted level |
-| 5 | Street Fight | Clear the corner |
-| 6 | Payback | Grab the stash, then get away |
-| 7 | The Setup | Tail the courier |
-| 8 | Dockside Score | Collect the crates |
-| 9 | Harbor Brawl | Clear the docks |
-| 10 | Neon Sprint | A checkpoint race |
-| 11 | Vault Job | Get past the guards, take the cash, escape |
-| 12 | VIP Ride | Drive the client to Beachfront |
-| 13 | Midnight Run | Three stops in ninety seconds |
-| 14 | Silent Pier | Stealth past sentries and vision cones |
-| 15 | Neon Mile | Rob the casino, then run for the Airfield |
-| 16 | Harbor Storm | Clear the docks in the storm |
-| 17 | The Broker | Take down boss Vex |
-| 18 | King of Port Solano | Boss Rook Reborn — vanish once the heat hits five stars |
+Eighteen story missions follow Deke's climb out of debt. Each mission opens with a briefing cutscene and ends with a payoff that chips away at the $50,000 he owes Madame Kestrel. Cutscenes — intro, briefings, and the finale — are staged with character portraits.
 
-## What else is in the city
+| # | Mission |
+| --- | --- |
+| 1 | Welcome Back |
+| 2 | Hot Wheels |
+| 3 | Harbor Run |
+| 4 | Lose the Heat |
+| 5 | Street Fight |
+| 6 | Payback |
+| 7 | The Setup |
+| 8 | Dockside Score |
+| 9 | Harbor Brawl |
+| 10 | Neon Sprint |
+| 11 | Vault Job |
+| 12 | VIP Ride |
+| 13 | Midnight Run |
+| 14 | Silent Pier |
+| 15 | Neon Mile |
+| 16 | Harbor Storm |
+| 17 | The Broker |
+| 18 | King of Port Solano |
 
-- An intro cutscene, a briefing panel with character portraits before
-  every mission, and a finale cutscene.
-- A garage where cars can be upgraded, including NOS; the Tide Runner 900
-  motorcycle; rain weather; a gun shop; two safehouses; three procedural
-  radio stations; and saves that keep your progress.
-- Heat Wave, an endless survival mode against escalating police pressure.
+## Systems
 
-The four dossier frames are staged through `shots.json` — each entry
-names the shot query the game loads in shot mode, so the screenshots can
-be retaken exactly.
+- **Wanted level 0–5 stars.** The PSPD responds with cruisers, roadblocks, spike strips, PIT maneuvers, and the police helicopter AIR-1 at high heat.
+- **Driving.** Steal any car, outrun the law, and use NOS for a burst of speed. The Tide Runner 900 motorcycle is available for fast getaways.
+- **Garage upgrades.** Spend mission earnings on upgrades, including NOS.
+- **Combat.** Three weapons, switchable with 1/2/3, plus a weapon shop to stock up.
+- **Weather.** Golden-hour sun, and rain that changes how the city looks and feels.
+- **Safehouses.** Two safehouses across the city.
+- **Radio.** Three procedural radio stations, switchable with R.
+- **Save.** Progress is saved between sessions.
+- **Heat Wave.** An endless mode for chasing high scores once the story is done.
+
+## Screenshots
+
+Staged shots are listed in `shots.json` (seed 20261123): a five-star golden-hour chase with heli AIR-1, Neon Mile at night, the beachfront at golden hour, and the pier cutscene with Madame Kestrel.
 
 ---
 
-<sub>Entered on [make.fun](https://make.fun/?ref=dy7a168m&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+Built for the make.fun gta6-01 bounty — [make.fun](https://make.fun/bounty/gta6-01?ref=dy7a168m).
